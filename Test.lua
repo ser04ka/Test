@@ -2,6 +2,7 @@
     Bee Swarm Simulator - Visual Click GUI
     Стиль: Тёмный с золотым акцентом
     Экзекьютер: Delta
+    Версия: 2.0
 ]]
 
 -- Сервисы
@@ -9,6 +10,7 @@ local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
 
 -- Настройки анимации
 local TWEEN_SPEED = 0.15
@@ -20,7 +22,45 @@ ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
 ClickGui.Parent = CoreGui
 
--- Основной контейнер
+-- ====== ИКОНКА-КВАДРАТИК (открывашка) ======
+local IconButton = Instance.new("TextButton")
+IconButton.Name = "IconButton"
+IconButton.Size = UDim2.new(0, 45, 0, 45)
+-- Позиция: по центру сверху (не в самом верху, отступ 30 пикселей)
+IconButton.Position = UDim2.new(0.5, -22, 0, 30)
+IconButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+IconButton.BorderSizePixel = 0
+IconButton.TextColor3 = Color3.fromRGB(255, 200, 60)
+IconButton.Text = "🐝"
+IconButton.TextSize = 24
+IconButton.Font = Enum.Font.GothamBold
+IconButton.AutoButtonColor = false
+IconButton.Parent = ClickGui
+
+-- Золотая рамка
+local IconStroke = Instance.new("UIStroke")
+IconStroke.Color = Color3.fromRGB(255, 180, 30)
+IconStroke.Thickness = 2
+IconStroke.Parent = IconButton
+
+-- Закругление углов (через UICorner)
+local IconCorner = Instance.new("UICorner")
+IconCorner.CornerRadius = UDim.new(0, 14)
+IconCorner.Parent = IconButton
+
+-- Тень под иконкой
+local IconShadow = Instance.new("ImageLabel")
+IconShadow.Size = UDim2.new(0, 49, 0, 49)
+IconShadow.Position = UDim2.new(0.5, -24, 0.5, -24)
+IconShadow.BackgroundTransparency = 1
+IconShadow.Image = "rbxassetid://6015897843" -- стандартная тень Roblox
+IconShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+IconShadow.ImageTransparency = 0.6
+IconShadow.ScaleType = Enum.ScaleType.Slice
+IconShadow.SliceCenter = Rect.new(49, 49, 209, 209)
+IconShadow.Parent = IconButton
+
+-- ====== ОСНОВНОЕ МЕНЮ ======
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 500, 0, 400)
@@ -28,7 +68,13 @@ MainFrame.Position = UDim2.new(0.5, -250, 0.5, -200)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = false
+MainFrame.Visible = false -- СКРЫТО по умолчанию
 MainFrame.Parent = ClickGui
+
+-- Закругление меню
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 6)
+MainCorner.Parent = MainFrame
 
 -- Градиентная рамка (верхняя полоса)
 local TopBar = Instance.new("Frame")
@@ -37,6 +83,11 @@ TopBar.Size = UDim2.new(1, 0, 0, 35)
 TopBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
 TopBar.BorderSizePixel = 0
 TopBar.Parent = MainFrame
+
+-- Закругление верхней части
+local TopCorner = Instance.new("UICorner")
+TopCorner.CornerRadius = UDim.new(0, 6)
+TopCorner.Parent = TopBar
 
 -- Золотая линия под топбаром
 local GoldLine = Instance.new("Frame")
@@ -79,6 +130,11 @@ CloseButton.Text = "✕"
 CloseButton.TextSize = 16
 CloseButton.Font = Enum.Font.GothamBold
 CloseButton.Parent = TopBar
+
+-- Закругление кнопки закрытия
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseButton
 
 -- Левая панель (табы)
 local TabPanel = Instance.new("Frame")
@@ -143,6 +199,11 @@ function CreateTab(name, icon)
     TabButton.TextXAlignment = Enum.TextXAlignment.Left
     TabButton.AutoButtonColor = false
     TabButton.Parent = TabPanel
+
+    -- Закругление табов
+    local TabCorner = Instance.new("UICorner")
+    TabCorner.CornerRadius = UDim.new(0, 6)
+    TabCorner.Parent = TabButton
 
     -- Золотая полоска (скрыта по умолчанию)
     local Highlight = Instance.new("Frame")
@@ -263,6 +324,10 @@ function CreateToggle(tabData, section, name, default, callback)
     ToggleFrame.LayoutOrder = #tabData.Elements + 1
     ToggleFrame.Parent = tabData.Page
 
+    local ToggleCorner = Instance.new("UICorner")
+    ToggleCorner.CornerRadius = UDim.new(0, 6)
+    ToggleCorner.Parent = ToggleFrame
+
     local ToggleLabel = Instance.new("TextLabel")
     ToggleLabel.Size = UDim2.new(0, 140, 0, 36)
     ToggleLabel.BackgroundTransparency = 1
@@ -284,12 +349,20 @@ function CreateToggle(tabData, section, name, default, callback)
     ToggleButton.AutoButtonColor = false
     ToggleButton.Parent = ToggleFrame
 
+    local ToggleBtnCorner = Instance.new("UICorner")
+    ToggleBtnCorner.CornerRadius = UDim.new(1, 0)
+    ToggleBtnCorner.Parent = ToggleButton
+
     local ToggleCircle = Instance.new("Frame")
     ToggleCircle.Size = UDim2.new(0, 12, 0, 12)
     ToggleCircle.Position = default and UDim2.new(1, -15, 0.5, -6) or UDim2.new(0, 3, 0.5, -6)
     ToggleCircle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     ToggleCircle.BorderSizePixel = 0
     ToggleCircle.Parent = ToggleButton
+
+    local CircleCorner = Instance.new("UICorner")
+    CircleCorner.CornerRadius = UDim.new(1, 0)
+    CircleCorner.Parent = ToggleCircle
 
     local state = default
 
@@ -322,6 +395,10 @@ function CreateSlider(tabData, section, name, min, max, default, suffix, callbac
     SliderFrame.LayoutOrder = #tabData.Elements + 1
     SliderFrame.Parent = tabData.Page
 
+    local SliderCorner = Instance.new("UICorner")
+    SliderCorner.CornerRadius = UDim.new(0, 6)
+    SliderCorner.Parent = SliderFrame
+
     local SliderLabel = Instance.new("TextLabel")
     SliderLabel.Size = UDim2.new(0, 140, 0, 20)
     SliderLabel.Position = UDim2.new(0, 10, 0, 5)
@@ -341,12 +418,20 @@ function CreateSlider(tabData, section, name, min, max, default, suffix, callbac
     SliderBar.BorderSizePixel = 0
     SliderBar.Parent = SliderFrame
 
+    local BarCorner = Instance.new("UICorner")
+    BarCorner.CornerRadius = UDim.new(0, 3)
+    BarCorner.Parent = SliderBar
+
     local SliderFill = Instance.new("Frame")
     local fillPercent = (default - min) / (max - min)
     SliderFill.Size = UDim2.new(fillPercent, 0, 1, 0)
     SliderFill.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
     SliderFill.BorderSizePixel = 0
     SliderFill.Parent = SliderBar
+
+    local FillCorner = Instance.new("UICorner")
+    FillCorner.CornerRadius = UDim.new(0, 3)
+    FillCorner.Parent = SliderFill
 
     local SliderButton = Instance.new("TextButton")
     SliderButton.Size = UDim2.new(1, 0, 0, 20)
@@ -380,7 +465,7 @@ function CreateSlider(tabData, section, name, min, max, default, suffix, callbac
         end
     end)
 
-    game:GetService("UserInputService").InputChanged:Connect(function(input)
+    UserInputService.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             UpdateSlider(input)
         end
@@ -399,6 +484,10 @@ function CreateButton(tabData, section, name, callback)
     ButtonFrame.LayoutOrder = #tabData.Elements + 1
     ButtonFrame.Parent = tabData.Page
 
+    local BtnFrameCorner = Instance.new("UICorner")
+    BtnFrameCorner.CornerRadius = UDim.new(0, 6)
+    BtnFrameCorner.Parent = ButtonFrame
+
     local Button = Instance.new("TextButton")
     Button.Size = UDim2.new(1, -20, 0, 26)
     Button.Position = UDim2.new(0, 10, 0, 3)
@@ -410,6 +499,10 @@ function CreateButton(tabData, section, name, callback)
     Button.Font = Enum.Font.GothamBold
     Button.AutoButtonColor = false
     Button.Parent = ButtonFrame
+
+    local BtnCorner = Instance.new("UICorner")
+    BtnCorner.CornerRadius = UDim.new(0, 4)
+    BtnCorner.Parent = Button
 
     Button.MouseEnter:Connect(function()
         TweenService:Create(Button, tweenInfo, {BackgroundColor3 = Color3.fromRGB(60, 50, 30)}):Play()
@@ -430,51 +523,110 @@ function CreateButton(tabData, section, name, callback)
     return Button
 end
 
--- ====== Drag System ======
-local dragging = false
-local dragInput, dragStart, startPos
+-- ====== DRAG ДЛЯ МЕНЮ (за верхнюю панель) ======
+local menuDragging = false
+local menuDragInput, menuDragStart, menuStartPos
 
 TopBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
+        menuDragging = true
+        menuDragStart = input.Position
+        menuStartPos = MainFrame.Position
 
         input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
+                menuDragging = false
             end
         end)
     end
 end)
 
 TopBar.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStart
+    if menuDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - menuDragStart
         MainFrame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X,
+            menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y
         )
     end
 end)
 
--- Закрытие/открытие (кнопка закрытия сворачивает в маленький шарик)
-local minimized = false
-local originalSize = MainFrame.Size
-local originalPos = MainFrame.Position
+-- ====== DRAG ДЛЯ ИКОНКИ (квадратика) ======
+local iconDragging = false
+local iconDragInput, iconDragStart, iconStartPos
 
-CloseButton.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    if minimized then
-        MainFrame.Size = UDim2.new(0, 180, 0, 35)
-        TabPanel.Visible = false
-        ContentPanel.Visible = false
-    else
-        MainFrame.Size = originalSize
-        MainFrame.Position = originalPos
-        TabPanel.Visible = true
-        ContentPanel.Visible = true
+IconButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        iconDragging = true
+        iconDragStart = input.Position
+        iconStartPos = IconButton.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                iconDragging = false
+            end
+        end)
     end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if iconDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - iconDragStart
+        IconButton.Position = UDim2.new(
+            iconStartPos.X.Scale, iconStartPos.X.Offset + delta.X,
+            iconStartPos.Y.Scale, iconStartPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- ====== ОТКРЫТИЕ/ЗАКРЫТИЕ МЕНЮ ======
+-- При клике на иконку - показываем меню
+IconButton.MouseButton1Click:Connect(function()
+    -- Игнорируем клик если был драг (проверяем расстояние)
+    if iconDragging then return end
+    
+    MainFrame.Visible = true
+    IconButton.Visible = false
+end)
+
+-- При клике на крестик - скрываем меню, показываем иконку
+CloseButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    IconButton.Visible = true
+    -- Иконка остаётся там же где была (не сбрасываем позицию)
+end)
+
+-- Защита от ложного клика при драге
+IconButton.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        -- Небольшая задержка чтобы отделить драг от клика
+        task.wait(0.05)
+        iconDragging = false
+    end
+end)
+
+-- ====== АНИМАЦИЯ ПОЯВЛЕНИЯ МЕНЮ ======
+MainFrame.Visible = false -- Изначально скрыто
+MainFrame.BackgroundTransparency = 1 -- Для анимации
+
+-- Функция показа с анимацией
+local function ShowMenu()
+    MainFrame.Visible = true
+    MainFrame.BackgroundTransparency = 1
+    MainFrame.Size = UDim2.new(0, 500, 0, 0)
+    
+    TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0, 500, 0, 400),
+        BackgroundTransparency = 0
+    }):Play()
+    
+    IconButton.Visible = false
+end
+
+-- Переопределяем клик на иконку с анимацией
+IconButton.MouseButton1Click:Connect(function()
+    if iconDragging then return end
+    ShowMenu()
 end)
 
 -- ====== ИНИЦИАЛИЗАЦИЯ ТАБОВ ======
@@ -487,17 +639,14 @@ CreateSection(VisualsTab, "ESP Settings")
 
 CreateToggle(VisualsTab, nil, "Player ESP", false, function(state)
     print("Player ESP:", state)
-    -- Тут будет код ESP на игроков
 end)
 
 CreateToggle(VisualsTab, nil, "Mob ESP", false, function(state)
     print("Mob ESP:", state)
-    -- Тут будет код ESP на мобов
 end)
 
 CreateToggle(VisualsTab, nil, "Field ESP", false, function(state)
     print("Field ESP:", state)
-    -- Тут будет подсветка полей
 end)
 
 CreateSlider(VisualsTab, nil, "ESP Distance", 100, 2000, 1000, " studs", function(value)
@@ -586,5 +735,17 @@ end)
 -- Выбираем первый таб по умолчанию
 SelectTab(Tabs[1])
 
-print("✅ Bee Swarm Click GUI загружен!")
-print("🐝 Версия: 1.0 | Delta Executor")
+-- ====== ФИНАЛЬНЫЕ НАСТРОЙКИ ======
+-- Иконка видна, меню скрыто при запуске
+IconButton.Visible = true
+MainFrame.Visible = false
+MainFrame.BackgroundTransparency = 0 -- Сбрасываем для нормального отображения
+MainFrame.Size = UDim2.new(0, 500, 0, 400) -- Полный размер
+
+print("✅ Bee Swarm Click GUI v2.0 загружен!")
+print("🐝 Особенности:")
+print("   - Круглый значок с закруглёнными краями")
+print("   - Позиция: центр сверху (отступ 30px)")
+print("   - Перетаскивание значка и меню")
+print("   - Плавная анимация открытия")
+print("   - Значок остаётся на месте после закрытия")
