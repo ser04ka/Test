@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 5.0 (Ручной сброс счётчика мёда)
+    Версия: 5.1 (Умный захват мёда + слушатель изменений)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -16,47 +16,104 @@ local tweenInfo = TweenInfo.new(TWEEN_SPEED, Enum.EasingStyle.Quart, Enum.Easing
 local startTime = tick()
 local initialHoney = nil
 local stopEverything = false
+local honeyElement = nil  -- ссылка на GUI с мёдом
 
--- Функция поиска мёда (leaderstats / GUI)
-local function getHoneyFromGame()
+-- Функция поиска элемента с мёдом (возвращает элемент или nil)
+local function findHoneyElement()
     local player = LocalPlayer
     if not player then return nil end
-
+    
+    -- 1. Попробуем найти leaderstats (часто содержит IntValue)
     local leaderstats = player:FindFirstChild("leaderstats") or player:FindFirstChild("stats")
     if leaderstats then
         for _, stat in ipairs(leaderstats:GetChildren()) do
             local name = stat.Name:lower()
-            if name == "honey" or name == "honeyamount" or name == "honey total" or name == "мёд" or name == "мед" then
+            if name == "honey" or name == "honeyamount" or name == "honey total" then
                 if stat:IsA("IntValue") or stat:IsA("DoubleValue") or stat:IsA("NumberValue") then
-                    return stat.Value
+                    return stat  -- это не текст, но мы можем вернуть Value
                 end
             end
         end
     end
-
-    for _, child in ipairs(player:GetChildren()) do
-        if child.Name == "Honey" and (child:IsA("IntValue") or child:IsA("NumberValue")) then
-            return child.Value
-        end
-    end
-
+    
+    -- 2. Поиск в PlayerGui текстового элемента с "honey"
     local playerGui = player:FindFirstChild("PlayerGui")
     if playerGui then
         for _, element in ipairs(playerGui:GetDescendants()) do
             if element:IsA("TextLabel") or element:IsA("TextButton") then
                 local text = element.Text:lower()
-                if text:find("honey") or text:find("мёд") or text:find("мед") then
-                    local num = text:match("([%d,]+)")
-                    if num then
-                        local val = tonumber(num:gsub(",", ""))
-                        if val then return val end
-                    end
+                if text:find("honey") then
+                    return element  -- сам элемент, будем слушать его .Text
                 end
             end
         end
     end
     return nil
 end
+
+-- Извлечение числа из текста (ожидает "honey" рядом)
+local function extractHoneyFromText(text)
+    if not text then return nil end
+    local lower = text:lower()
+    if not lower:find("honey") then return nil end
+    -- ищем число с запятыми
+    local numStr = lower:match("([%d,]+)")
+    if numStr then
+        local cleaned = numStr:gsub(",", "")
+        return tonumber(cleaned)
+    end
+    return nil
+end
+
+-- Получение текущего мёда (если элемент уже найден – читаем его текст или Value)
+local function getCurrentHoney()
+    if honeyElement then
+        if honeyElement:IsA("IntValue") or honeyElement:IsA("DoubleValue") or honeyElement:IsA("NumberValue") then
+            return honeyElement.Value
+        elseif honeyElement:IsA("TextLabel") or honeyElement:IsA("TextButton") then
+            return extractHoneyFromText(honeyElement.Text)
+        end
+    end
+    return nil
+end
+
+-- Функция обновления Session Honey (вызывается при изменении мёда)
+local function updateSessionHoney()
+    local cur = getCurrentHoney()
+    if cur then
+        if initialHoney == nil then
+            initialHoney = cur
+        end
+        local session = math.max(0, cur - initialHoney)
+        HoneyLabel.Text = "Session Honey: " .. session
+    else
+        HoneyLabel.Text = "Session Honey: searching..."
+    end
+end
+
+-- Инициализация поиска элемента (повторяем, пока не найдём)
+spawn(function()
+    while not honeyElement do
+        honeyElement = findHoneyElement()
+        if honeyElement then
+            -- Если это текстовый элемент, вешаем слушатель изменений текста
+            if honeyElement:IsA("TextLabel") or honeyElement:IsA("TextButton") then
+                honeyElement:GetPropertyChangedSignal("Text"):Connect(function()
+                    updateSessionHoney()
+                end)
+            elseif honeyElement:IsA("Instance") and honeyElement:FindFirstChild("Value") then
+                -- для IntValue и т.п.
+                honeyElement.Changed:Connect(function()
+                    updateSessionHoney()
+                end)
+            end
+            print("✅ Honey element found: " .. honeyElement:GetFullName())
+        end
+        task.wait(1)
+    end
+    -- Первое обновление после находки
+    updateSessionHoney()
+end)
 
 -- Форматирование времени
 local function formatTime(seconds)
@@ -74,7 +131,6 @@ ClickGui.Parent = CoreGui
 
 -- Иконка
 local IconButton = Instance.new("TextButton")
-IconButton.Name = "IconButton"
 IconButton.Size = UDim2.new(0, 45, 0, 45)
 IconButton.Position = UDim2.new(0.5, -22, 0, 30)
 IconButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
@@ -85,15 +141,9 @@ IconButton.TextSize = 24
 IconButton.Font = Enum.Font.GothamBold
 IconButton.AutoButtonColor = false
 IconButton.Parent = ClickGui
-
-local IconStroke = Instance.new("UIStroke")
-IconStroke.Color = Color3.fromRGB(255, 180, 30)
-IconStroke.Thickness = 2
-IconStroke.Parent = IconButton
-
-local IconCorner = Instance.new("UICorner")
-IconCorner.CornerRadius = UDim.new(0, 14)
-IconCorner.Parent = IconButton
+Instance.new("UIStroke", IconButton).Color = Color3.fromRGB(255, 180, 30)
+Instance.new("UIStroke", IconButton).Thickness = 2
+Instance.new("UICorner", IconButton).CornerRadius = UDim.new(0, 14)
 
 -- Главное меню
 local MainFrame = Instance.new("Frame")
@@ -101,13 +151,9 @@ MainFrame.Size = UDim2.new(0, 500, 0, 290)
 MainFrame.Position = UDim2.new(0.5, -250, 0.5, -145)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 MainFrame.BorderSizePixel = 0
-MainFrame.ClipsDescendants = false
 MainFrame.Visible = false
 MainFrame.Parent = ClickGui
-
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 6)
-MainCorner.Parent = MainFrame
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 6)
 
 -- Верхняя панель
 local TopBar = Instance.new("Frame")
@@ -115,10 +161,7 @@ TopBar.Size = UDim2.new(1, 0, 0, 35)
 TopBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
 TopBar.BorderSizePixel = 0
 TopBar.Parent = MainFrame
-
-local TopCorner = Instance.new("UICorner")
-TopCorner.CornerRadius = UDim.new(0, 6)
-TopCorner.Parent = TopBar
+Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 6)
 
 local GoldLine = Instance.new("Frame")
 GoldLine.Size = UDim2.new(1, 0, 0, 2)
@@ -156,10 +199,7 @@ CloseButton.BorderSizePixel = 0
 CloseButton.Text = ""
 CloseButton.AutoButtonColor = false
 CloseButton.Parent = TopBar
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 6)
-CloseCorner.Parent = CloseButton
+Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(0, 6)
 
 local Line1 = Instance.new("Frame")
 Line1.Size = UDim2.new(0, 2, 0, 16)
@@ -185,12 +225,9 @@ TabPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 TabPanel.BorderSizePixel = 0
 TabPanel.Parent = MainFrame
 
-local Divider = Instance.new("Frame")
-Divider.Size = UDim2.new(0, 1, 1, 0)
-Divider.Position = UDim2.new(1, 0, 0, 0)
-Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-Divider.BorderSizePixel = 0
-Divider.Parent = TabPanel
+Instance.new("Frame", TabPanel).Size = UDim2.new(0, 1, 1, 0)
+TabPanel.Divider.Position = UDim2.new(1, 0, 0, 0)
+TabPanel.Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
 
 -- Правая панель (контент)
 local ContentPanel = Instance.new("Frame")
@@ -216,13 +253,12 @@ UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 UIListLayout.Parent = ContentContainer
 
--- Хранилище табов
+-- Табы
 local Tabs = {}
 local SelectedTab = nil
 
 function CreateTab(name, icon)
     local TabButton = Instance.new("TextButton")
-    TabButton.Name = name
     TabButton.Size = UDim2.new(1, -20, 0, 32)
     TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 33) + 10)
     TabButton.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -234,11 +270,8 @@ function CreateTab(name, icon)
     TabButton.TextXAlignment = Enum.TextXAlignment.Left
     TabButton.AutoButtonColor = false
     TabButton.Parent = TabPanel
-
-    local TabCorner = Instance.new("UICorner")
-    TabCorner.CornerRadius = UDim.new(0, 6)
-    TabCorner.Parent = TabButton
-
+    Instance.new("UICorner", TabButton).CornerRadius = UDim.new(0, 6)
+    
     local Highlight = Instance.new("Frame")
     Highlight.Size = UDim2.new(0, 3, 1, -8)
     Highlight.Position = UDim2.new(0, -4, 0, 4)
@@ -246,32 +279,19 @@ function CreateTab(name, icon)
     Highlight.BorderSizePixel = 0
     Highlight.BackgroundTransparency = 1
     Highlight.Parent = TabButton
-
+    
     local TabPage = Instance.new("Frame")
-    TabPage.Name = name .. "Page"
-    TabPage.Size = UDim2.new(1, 0, 0, 0)
     TabPage.BackgroundTransparency = 1
     TabPage.Visible = false
     TabPage.Parent = ContentContainer
-
     local PageLayout = Instance.new("UIListLayout")
     PageLayout.Padding = UDim.new(0, 6)
     PageLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
     PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
     PageLayout.Parent = TabPage
-
-    local tabData = {
-        Button = TabButton,
-        Page = TabPage,
-        Highlight = Highlight,
-        Layout = PageLayout,
-        Elements = {}
-    }
-
-    TabButton.MouseButton1Click:Connect(function()
-        SelectTab(tabData)
-    end)
-
+    
+    local tabData = { Button = TabButton, Page = TabPage, Highlight = Highlight, Layout = PageLayout, Elements = {} }
+    TabButton.MouseButton1Click:Connect(function() SelectTab(tabData) end)
     table.insert(Tabs, tabData)
     return tabData
 end
@@ -280,49 +300,35 @@ function SelectTab(tabData)
     if SelectedTab == tabData then return end
     if SelectedTab then
         TweenService:Create(SelectedTab.Highlight, tweenInfo, {BackgroundTransparency = 1}):Play()
-        TweenService:Create(SelectedTab.Button, tweenInfo, {
-            BackgroundColor3 = Color3.fromRGB(25, 25, 28),
-            TextColor3 = Color3.fromRGB(180, 180, 190)
-        }):Play()
+        TweenService:Create(SelectedTab.Button, tweenInfo, {BackgroundColor3 = Color3.fromRGB(25, 25, 28), TextColor3 = Color3.fromRGB(180, 180, 190)}):Play()
         SelectedTab.Page.Visible = false
     end
     SelectedTab = tabData
     tabData.Page.Visible = true
     TweenService:Create(tabData.Highlight, tweenInfo, {BackgroundTransparency = 0}):Play()
-    TweenService:Create(tabData.Button, tweenInfo, {
-        BackgroundColor3 = Color3.fromRGB(35, 30, 20),
-        TextColor3 = Color3.fromRGB(255, 200, 60)
-    }):Play()
+    TweenService:Create(tabData.Button, tweenInfo, {BackgroundColor3 = Color3.fromRGB(35, 30, 20), TextColor3 = Color3.fromRGB(255, 200, 60)}):Play()
     UpdateCanvasSize()
 end
 
 function UpdateCanvasSize()
     if SelectedTab then
-        local height = 0
-        for _, element in ipairs(SelectedTab.Elements) do
-            height = height + element.AbsoluteSize.Y + 6
-        end
-        ContentContainer.CanvasSize = UDim2.new(0, 0, 0, math.max(height + 20, ContentContainer.AbsoluteSize.Y))
+        local h = 0
+        for _, e in ipairs(SelectedTab.Elements) do h = h + e.AbsoluteSize.Y + 6 end
+        ContentContainer.CanvasSize = UDim2.new(0, 0, 0, math.max(h + 20, ContentContainer.AbsoluteSize.Y))
     end
 end
 
 -- Заглушки
-function CreateSection() end
-function CreateToggle() end
-function CreateSlider() end
-function CreateButton() end
+function CreateSection() end function CreateToggle() end function CreateSlider() end function CreateButton() end
 
 -- Перетаскивание меню
-local menuDragging = false
-local menuDragStart, menuStartPos
+local menuDragging, menuDragStart, menuStartPos
 TopBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         menuDragging = true
         menuDragStart = input.Position
         menuStartPos = MainFrame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then menuDragging = false end
-        end)
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then menuDragging = false end end)
     end
 end)
 TopBar.InputChanged:Connect(function(input)
@@ -333,16 +339,13 @@ TopBar.InputChanged:Connect(function(input)
 end)
 
 -- Перетаскивание иконки
-local iconDragging = false
-local iconDragStart, iconStartPos
+local iconDragging, iconDragStart, iconStartPos
 IconButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         iconDragging = true
         iconDragStart = input.Position
         iconStartPos = IconButton.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then iconDragging = false end
-        end)
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then iconDragging = false end end)
     end
 end)
 UserInputService.InputChanged:Connect(function(input)
@@ -352,7 +355,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Открытие/закрытие
 IconButton.MouseButton1Click:Connect(function()
     if iconDragging then return end
     MainFrame.Visible = true
@@ -363,13 +365,10 @@ CloseButton.MouseButton1Click:Connect(function()
     IconButton.Visible = true
 end)
 IconButton.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        task.wait(0.05)
-        iconDragging = false
-    end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then task.wait(0.05) iconDragging = false end
 end)
 
--- Создание вкладок
+-- Вкладки
 local HomeTab = CreateTab("Home", "⌂")
 local FarmingTab = CreateTab("Farming", "✿")
 local CombatTab = CreateTab("Combat", "⚔")
@@ -388,7 +387,6 @@ HomeSectionFrame.BackgroundTransparency = 1
 HomeSectionFrame.LayoutOrder = 1
 HomeSectionFrame.Parent = HomePage
 
--- Заголовок со стрелкой
 local HomeToggleBtn = Instance.new("TextButton")
 HomeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
 HomeToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -431,13 +429,13 @@ local HoneyLabel = Instance.new("TextLabel")
 HoneyLabel.Size = UDim2.new(1, 0, 0, 20)
 HoneyLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 HoneyLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-HoneyLabel.Text = "Session Honey: --"
+HoneyLabel.Text = "Session Honey: searching..."
 HoneyLabel.TextSize = 12
 HoneyLabel.Font = Enum.Font.Gotham
 HoneyLabel.Parent = HomeContent
 Instance.new("UICorner", HoneyLabel).CornerRadius = UDim.new(0, 4)
 
--- Кнопка Reset Honey Counter
+-- Reset Honey Counter
 local ResetHoneyBtn = Instance.new("TextButton")
 ResetHoneyBtn.Size = UDim2.new(1, 0, 0, 20)
 ResetHoneyBtn.BackgroundColor3 = Color3.fromRGB(45, 40, 25)
@@ -476,9 +474,7 @@ StopButton.BorderSizePixel = 0
 StopButton.Text = ""
 StopButton.AutoButtonColor = false
 StopButton.Parent = StopFrame
-local StopBtnCorner = Instance.new("UICorner")
-StopBtnCorner.CornerRadius = UDim.new(1, 0)
-StopBtnCorner.Parent = StopButton
+local StopBtnCorner = Instance.new("UICorner"); StopBtnCorner.CornerRadius = UDim.new(1, 0); StopBtnCorner.Parent = StopButton
 
 local StopCircle = Instance.new("Frame")
 StopCircle.Size = UDim2.new(0, 10, 0, 10)
@@ -486,11 +482,9 @@ StopCircle.Position = UDim2.new(0, 2, 0.5, -5)
 StopCircle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 StopCircle.BorderSizePixel = 0
 StopCircle.Parent = StopButton
-local StopCircleCorner = Instance.new("UICorner")
-StopCircleCorner.CornerRadius = UDim.new(1, 0)
-StopCircleCorner.Parent = StopCircle
+local StopCircleCorner = Instance.new("UICorner"); StopCircleCorner.CornerRadius = UDim.new(1, 0); StopCircleCorner.Parent = StopCircle
 
--- Функция обновления размера секции
+-- Состояние раскрытия
 local homeSectionOpen = true
 local function updateHomeSectionSize()
     if homeSectionOpen then
@@ -528,7 +522,7 @@ end)
 
 -- Сброс счётчика мёда
 ResetHoneyBtn.MouseButton1Click:Connect(function()
-    local cur = getHoneyFromGame()
+    local cur = getCurrentHoney()
     if cur then
         initialHoney = cur
         HoneyLabel.Text = "Session Honey: 0"
@@ -549,23 +543,12 @@ StopButton.MouseButton1Click:Connect(function()
     stopEverything = stopEverythingEnabled
 end)
 
--- Главный цикл обновления
+-- Обновление Uptime
 spawn(function()
     while true do
         task.wait(0.5)
         local elapsed = tick() - startTime
         UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
-
-        local curHoney = getHoneyFromGame()
-        if curHoney then
-            if initialHoney == nil then
-                initialHoney = curHoney -- запомним при первом запуске
-            end
-            local session = math.max(0, curHoney - initialHoney)
-            HoneyLabel.Text = "Session Honey: " .. session
-        else
-            HoneyLabel.Text = "Session Honey: waiting..."
-        end
     end
 end)
 
@@ -575,4 +558,4 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm GUI v5.0 загружен! Используй 'Reset Honey Counter' перед фармом.")
+print("✅ v5.1 загружен! Найдёт Honey в GUI и будет отслеживать изменения.")
