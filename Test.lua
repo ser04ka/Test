@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 4.6 (initialHoney фиксируется в основном цикле)
+    Версия: 5.0 (Ручной сброс счётчика мёда)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -17,52 +17,45 @@ local startTime = tick()
 local initialHoney = nil
 local stopEverything = false
 
--- Поиск мёда
+-- Функция поиска мёда (leaderstats / GUI)
 local function getHoneyFromGame()
     local player = LocalPlayer
-    if not player then return nil, "no player" end
+    if not player then return nil end
 
-    -- leaderstats
     local leaderstats = player:FindFirstChild("leaderstats") or player:FindFirstChild("stats")
     if leaderstats then
         for _, stat in ipairs(leaderstats:GetChildren()) do
             local name = stat.Name:lower()
             if name == "honey" or name == "honeyamount" or name == "honey total" or name == "мёд" or name == "мед" then
                 if stat:IsA("IntValue") or stat:IsA("DoubleValue") or stat:IsA("NumberValue") then
-                    return stat.Value, "leaderstats/" .. stat.Name
+                    return stat.Value
                 end
             end
         end
     end
 
-    -- Player
     for _, child in ipairs(player:GetChildren()) do
         if child.Name == "Honey" and (child:IsA("IntValue") or child:IsA("NumberValue")) then
-            return child.Value, "Player/Honey"
+            return child.Value
         end
     end
 
-    -- GUI (экран)
     local playerGui = player:FindFirstChild("PlayerGui")
     if playerGui then
         for _, element in ipairs(playerGui:GetDescendants()) do
             if element:IsA("TextLabel") or element:IsA("TextButton") then
                 local text = element.Text:lower()
                 if text:find("honey") or text:find("мёд") or text:find("мед") then
-                    local numberText = text:match("([%d,]+)")
-                    if numberText then
-                        local cleaned = numberText:gsub(",", "")
-                        local value = tonumber(cleaned)
-                        if value then
-                            return value, "GUI:" .. element:GetFullName()
-                        end
+                    local num = text:match("([%d,]+)")
+                    if num then
+                        local val = tonumber(num:gsub(",", ""))
+                        if val then return val end
                     end
                 end
             end
         end
     end
-
-    return nil, "not found"
+    return nil
 end
 
 -- Форматирование времени
@@ -73,13 +66,13 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, mins, secs)
 end
 
--- Создание GUI
+-- ====== GUI ======
 local ClickGui = Instance.new("ScreenGui")
 ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
 ClickGui.Parent = CoreGui
 
--- Иконка-квадратик
+-- Иконка
 local IconButton = Instance.new("TextButton")
 IconButton.Name = "IconButton"
 IconButton.Size = UDim2.new(0, 45, 0, 45)
@@ -102,9 +95,8 @@ local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
 
--- Основное меню
+-- Главное меню
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 500, 0, 290)
 MainFrame.Position = UDim2.new(0.5, -250, 0.5, -145)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
@@ -119,7 +111,6 @@ MainCorner.Parent = MainFrame
 
 -- Верхняя панель
 local TopBar = Instance.new("Frame")
-TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, 0, 0, 35)
 TopBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
 TopBar.BorderSizePixel = 0
@@ -188,7 +179,6 @@ Line2.Parent = CloseButton
 
 -- Левая панель (табы)
 local TabPanel = Instance.new("Frame")
-TabPanel.Name = "TabPanel"
 TabPanel.Size = UDim2.new(0, 140, 1, -35)
 TabPanel.Position = UDim2.new(0, 0, 0, 35)
 TabPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
@@ -204,7 +194,6 @@ Divider.Parent = TabPanel
 
 -- Правая панель (контент)
 local ContentPanel = Instance.new("Frame")
-ContentPanel.Name = "ContentPanel"
 ContentPanel.Size = UDim2.new(1, -140, 1, -35)
 ContentPanel.Position = UDim2.new(0, 140, 0, 35)
 ContentPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
@@ -251,7 +240,6 @@ function CreateTab(name, icon)
     TabCorner.Parent = TabButton
 
     local Highlight = Instance.new("Frame")
-    Highlight.Name = "Highlight"
     Highlight.Size = UDim2.new(0, 3, 1, -8)
     Highlight.Position = UDim2.new(0, -4, 0, 4)
     Highlight.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
@@ -290,7 +278,6 @@ end
 
 function SelectTab(tabData)
     if SelectedTab == tabData then return end
-
     if SelectedTab then
         TweenService:Create(SelectedTab.Highlight, tweenInfo, {BackgroundTransparency = 1}):Play()
         TweenService:Create(SelectedTab.Button, tweenInfo, {
@@ -299,7 +286,6 @@ function SelectTab(tabData)
         }):Play()
         SelectedTab.Page.Visible = false
     end
-
     SelectedTab = tabData
     tabData.Page.Visible = true
     TweenService:Create(tabData.Highlight, tweenInfo, {BackgroundTransparency = 0}):Play()
@@ -307,7 +293,6 @@ function SelectTab(tabData)
         BackgroundColor3 = Color3.fromRGB(35, 30, 20),
         TextColor3 = Color3.fromRGB(255, 200, 60)
     }):Play()
-
     UpdateCanvasSize()
 end
 
@@ -321,80 +306,62 @@ function UpdateCanvasSize()
     end
 end
 
--- Заглушки функций создания элементов
-function CreateSection(tabData, title) end
-function CreateToggle(tabData, section, name, default, callback) end
-function CreateSlider(tabData, section, name, min, max, default, suffix, callback) end
-function CreateButton(tabData, section, name, callback) end
+-- Заглушки
+function CreateSection() end
+function CreateToggle() end
+function CreateSlider() end
+function CreateButton() end
 
 -- Перетаскивание меню
 local menuDragging = false
 local menuDragStart, menuStartPos
-
 TopBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         menuDragging = true
         menuDragStart = input.Position
         menuStartPos = MainFrame.Position
-
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                menuDragging = false
-            end
+            if input.UserInputState == Enum.UserInputState.End then menuDragging = false end
         end)
     end
 end)
-
 TopBar.InputChanged:Connect(function(input)
     if menuDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - menuDragStart
-        MainFrame.Position = UDim2.new(
-            menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X,
-            menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y
-        )
+        MainFrame.Position = UDim2.new(menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X, menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y)
     end
 end)
 
 -- Перетаскивание иконки
 local iconDragging = false
 local iconDragStart, iconStartPos
-
 IconButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         iconDragging = true
         iconDragStart = input.Position
         iconStartPos = IconButton.Position
-
         input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                iconDragging = false
-            end
+            if input.UserInputState == Enum.UserInputState.End then iconDragging = false end
         end)
     end
 end)
-
 UserInputService.InputChanged:Connect(function(input)
     if iconDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - iconDragStart
-        IconButton.Position = UDim2.new(
-            iconStartPos.X.Scale, iconStartPos.X.Offset + delta.X,
-            iconStartPos.Y.Scale, iconStartPos.Y.Offset + delta.Y
-        )
+        IconButton.Position = UDim2.new(iconStartPos.X.Scale, iconStartPos.X.Offset + delta.X, iconStartPos.Y.Scale, iconStartPos.Y.Offset + delta.Y)
     end
 end)
 
--- Открытие/закрытие меню
+-- Открытие/закрытие
 IconButton.MouseButton1Click:Connect(function()
     if iconDragging then return end
     MainFrame.Visible = true
     IconButton.Visible = false
 end)
-
 CloseButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
     IconButton.Visible = true
 end)
-
 IconButton.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         task.wait(0.05)
@@ -402,7 +369,7 @@ IconButton.InputEnded:Connect(function(input)
     end
 end)
 
--- Вкладки
+-- Создание вкладок
 local HomeTab = CreateTab("Home", "⌂")
 local FarmingTab = CreateTab("Farming", "✿")
 local CombatTab = CreateTab("Combat", "⚔")
@@ -410,7 +377,6 @@ local QuestTab = CreateTab("Quest", "📕")
 local PlantersTab = CreateTab("Planters", "🌱")
 local ToysTab = CreateTab("Toys", "🧸")
 local SettingsTab = CreateTab("Settings", "⚙")
-
 HomeTab.Button.TextSize = 14
 
 -- ====== ВКЛАДКА HOME ======
@@ -422,7 +388,7 @@ HomeSectionFrame.BackgroundTransparency = 1
 HomeSectionFrame.LayoutOrder = 1
 HomeSectionFrame.Parent = HomePage
 
--- Стрелка (TextSize 18)
+-- Заголовок со стрелкой
 local HomeToggleBtn = Instance.new("TextButton")
 HomeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
 HomeToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -434,10 +400,7 @@ HomeToggleBtn.Font = Enum.Font.GothamBold
 HomeToggleBtn.TextXAlignment = Enum.TextXAlignment.Left
 HomeToggleBtn.AutoButtonColor = false
 HomeToggleBtn.Parent = HomeSectionFrame
-
-local ToggleBtnCorner = Instance.new("UICorner")
-ToggleBtnCorner.CornerRadius = UDim.new(0, 6)
-ToggleBtnCorner.Parent = HomeToggleBtn
+Instance.new("UICorner", HomeToggleBtn).CornerRadius = UDim.new(0, 6)
 
 local HomeContent = Instance.new("Frame")
 HomeContent.Size = UDim2.new(1, 0, 0, 80)
@@ -452,7 +415,7 @@ ContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 ContentList.SortOrder = Enum.SortOrder.LayoutOrder
 ContentList.Parent = HomeContent
 
--- Uptime Label
+-- Uptime
 local UptimeLabel = Instance.new("TextLabel")
 UptimeLabel.Size = UDim2.new(1, 0, 0, 20)
 UptimeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -461,12 +424,9 @@ UptimeLabel.Text = "Uptime: 00:00:00"
 UptimeLabel.TextSize = 12
 UptimeLabel.Font = Enum.Font.Gotham
 UptimeLabel.Parent = HomeContent
+Instance.new("UICorner", UptimeLabel).CornerRadius = UDim.new(0, 4)
 
-local UptimeCorner = Instance.new("UICorner")
-UptimeCorner.CornerRadius = UDim.new(0, 4)
-UptimeCorner.Parent = UptimeLabel
-
--- Session Honey Label
+-- Session Honey
 local HoneyLabel = Instance.new("TextLabel")
 HoneyLabel.Size = UDim2.new(1, 0, 0, 20)
 HoneyLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -475,21 +435,28 @@ HoneyLabel.Text = "Session Honey: --"
 HoneyLabel.TextSize = 12
 HoneyLabel.Font = Enum.Font.Gotham
 HoneyLabel.Parent = HomeContent
+Instance.new("UICorner", HoneyLabel).CornerRadius = UDim.new(0, 4)
 
-local HoneyCorner = Instance.new("UICorner")
-HoneyCorner.CornerRadius = UDim.new(0, 4)
-HoneyCorner.Parent = HoneyLabel
+-- Кнопка Reset Honey Counter
+local ResetHoneyBtn = Instance.new("TextButton")
+ResetHoneyBtn.Size = UDim2.new(1, 0, 0, 20)
+ResetHoneyBtn.BackgroundColor3 = Color3.fromRGB(45, 40, 25)
+ResetHoneyBtn.BorderSizePixel = 0
+ResetHoneyBtn.TextColor3 = Color3.fromRGB(255, 200, 60)
+ResetHoneyBtn.Text = "↺ Reset Honey Counter"
+ResetHoneyBtn.TextSize = 12
+ResetHoneyBtn.Font = Enum.Font.GothamBold
+ResetHoneyBtn.AutoButtonColor = false
+ResetHoneyBtn.Parent = HomeContent
+Instance.new("UICorner", ResetHoneyBtn).CornerRadius = UDim.new(0, 4)
 
--- Stop Everything Toggle
+-- Stop Everything
 local StopFrame = Instance.new("Frame")
 StopFrame.Size = UDim2.new(1, 0, 0, 22)
 StopFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 StopFrame.BorderSizePixel = 0
 StopFrame.Parent = HomeContent
-
-local StopFrameCorner = Instance.new("UICorner")
-StopFrameCorner.CornerRadius = UDim.new(0, 4)
-StopFrameCorner.Parent = StopFrame
+Instance.new("UICorner", StopFrame).CornerRadius = UDim.new(0, 4)
 
 local StopLabel = Instance.new("TextLabel")
 StopLabel.Size = UDim2.new(0, 140, 0, 22)
@@ -509,7 +476,6 @@ StopButton.BorderSizePixel = 0
 StopButton.Text = ""
 StopButton.AutoButtonColor = false
 StopButton.Parent = StopFrame
-
 local StopBtnCorner = Instance.new("UICorner")
 StopBtnCorner.CornerRadius = UDim.new(1, 0)
 StopBtnCorner.Parent = StopButton
@@ -520,26 +486,24 @@ StopCircle.Position = UDim2.new(0, 2, 0.5, -5)
 StopCircle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 StopCircle.BorderSizePixel = 0
 StopCircle.Parent = StopButton
-
 local StopCircleCorner = Instance.new("UICorner")
 StopCircleCorner.CornerRadius = UDim.new(1, 0)
 StopCircleCorner.Parent = StopCircle
 
--- Состояние раскрытия
+-- Функция обновления размера секции
 local homeSectionOpen = true
-
 local function updateHomeSectionSize()
     if homeSectionOpen then
         HomeContent.Visible = true
         local totalHeight = 0
         for _, child in ipairs(HomeContent:GetChildren()) do
-            if child:IsA("Frame") or child:IsA("TextLabel") then
+            if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
                 totalHeight = totalHeight + child.Size.Y.Offset
             end
         end
         local itemCount = 0
         for _, child in ipairs(HomeContent:GetChildren()) do
-            if child:IsA("Frame") or child:IsA("TextLabel") then
+            if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
                 itemCount = itemCount + 1
             end
         end
@@ -554,13 +518,21 @@ local function updateHomeSectionSize()
     end
     UpdateCanvasSize()
 end
-
 updateHomeSectionSize()
 
 HomeToggleBtn.MouseButton1Click:Connect(function()
     homeSectionOpen = not homeSectionOpen
     HomeToggleBtn.Text = homeSectionOpen and "  ▼  Home" or "  ▶  Home"
     updateHomeSectionSize()
+end)
+
+-- Сброс счётчика мёда
+ResetHoneyBtn.MouseButton1Click:Connect(function()
+    local cur = getHoneyFromGame()
+    if cur then
+        initialHoney = cur
+        HoneyLabel.Text = "Session Honey: 0"
+    end
 end)
 
 -- Stop Everything
@@ -577,18 +549,17 @@ StopButton.MouseButton1Click:Connect(function()
     stopEverything = stopEverythingEnabled
 end)
 
--- Главный цикл обновления (здесь же запоминаем initialHoney)
+-- Главный цикл обновления
 spawn(function()
     while true do
         task.wait(0.5)
         local elapsed = tick() - startTime
         UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
 
-        local curHoney, src = getHoneyFromGame()
+        local curHoney = getHoneyFromGame()
         if curHoney then
-            -- При первом получении запоминаем initialHoney
             if initialHoney == nil then
-                initialHoney = curHoney
+                initialHoney = curHoney -- запомним при первом запуске
             end
             local session = math.max(0, curHoney - initialHoney)
             HoneyLabel.Text = "Session Honey: " .. session
@@ -601,8 +572,7 @@ end)
 table.insert(HomeTab.Elements, HomeSectionFrame)
 SelectTab(HomeTab)
 
--- Финальные настройки
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ v4.6 загружен! initialHoney запоминается при первом обнаружении.")
+print("✅ Bee Swarm GUI v5.0 загружен! Используй 'Reset Honey Counter' перед фармом.")
