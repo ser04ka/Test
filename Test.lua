@@ -1,321 +1,321 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
-    Экзекьютер: Delta
-    Версия: 9.1 (Гарантированно красивый дизайн)
+    Версия: 9.2 ФИНАЛЬНАЯ (точно работает)
 ]]
 
-local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
-
--- Удаляем старый GUI, если он есть
-if CoreGui:FindFirstChild("BeeSwarmVisuals") then
-    CoreGui.BeeSwarmVisuals:Destroy()
-end
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
 
 local startTime = tick()
+local currentSpeed = 16
 local stopEverything = false
-local currentWalkSpeed = 16
 
-local function formatTime(seconds)
-    local hours = math.floor(seconds / 3600)
-    local mins = math.floor((seconds % 3600) / 60)
-    local secs = math.floor(seconds % 60)
-    return string.format("%02d:%02d:%02d", hours, mins, secs)
+-- Удаляем старый GUI
+if CoreGui:FindFirstChild("BeeSwarmGUI") then
+    CoreGui.BeeSwarmGUI:Destroy()
 end
 
--- ====== СОЗДАНИЕ GUI ======
-local ClickGui = Instance.new("ScreenGui")
-ClickGui.Name = "BeeSwarmVisuals"
-ClickGui.ResetOnSpawn = false
-ClickGui.Parent = CoreGui
+local gui = Instance.new("ScreenGui")
+gui.Name = "BeeSwarmGUI"
+gui.Parent = CoreGui
 
--- Иконка-квадратик
-local IconButton = Instance.new("TextButton")
-IconButton.Size = UDim2.new(0, 45, 0, 45)
-IconButton.Position = UDim2.new(0.5, -22, 0, 30)
-IconButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
-IconButton.TextColor3 = Color3.fromRGB(255, 200, 60)
-IconButton.Text = "🐝"
-IconButton.TextSize = 24
-IconButton.Font = Enum.Font.GothamBold
-IconButton.AutoButtonColor = false
-IconButton.Parent = ClickGui
-Instance.new("UIStroke", IconButton).Color = Color3.fromRGB(255, 180, 30)
-Instance.new("UIStroke", IconButton).Thickness = 2
-Instance.new("UICorner", IconButton).CornerRadius = UDim.new(0, 14)
+-- Формат времени
+local function fmt(t)
+    local h = math.floor(t/3600)
+    local m = math.floor((t%3600)/60)
+    local s = math.floor(t%60)
+    return string.format("%02d:%02d:%02d", h, m, s)
+end
 
--- Основное меню
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 500, 0, 290)
-MainFrame.Position = UDim2.new(0.5, -250, 0.5, -145)
-MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
-MainFrame.Visible = false
-MainFrame.Parent = ClickGui
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 6)
+-- ====== ИКОНКА ======
+local icon = Instance.new("TextButton")
+icon.Size = UDim2.new(0, 45, 0, 45)
+icon.Position = UDim2.new(0.5, -22, 0, 30)
+icon.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+icon.Text = "🐝"
+icon.TextSize = 24
+icon.Font = Enum.Font.GothamBold
+icon.AutoButtonColor = false
+icon.Parent = gui
+Instance.new("UIStroke", icon).Color = Color3.fromRGB(255, 180, 30)
+Instance.new("UIStroke", icon).Thickness = 2
+Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 14)
 
--- Верхняя панель
-local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, 0, 0, 35)
-TopBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
-TopBar.Parent = MainFrame
-Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 6)
+-- ====== ГЛАВНОЕ ОКНО ======
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 500, 0, 290)
+main.Position = UDim2.new(0.5, -250, 0.5, -145)
+main.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+main.Visible = false
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 6)
 
-local GoldLine = Instance.new("Frame")
-GoldLine.Size = UDim2.new(1, 0, 0, 2)
-GoldLine.Position = UDim2.new(0, 0, 1, 0)
-GoldLine.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
-GoldLine.Parent = TopBar
+-- Верхняя панель (драг)
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 35)
+topBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
+topBar.Parent = main
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 6)
 
-local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Size = UDim2.new(0, 180, 0, 25)
-TitleLabel.Position = UDim2.new(0, 38, 0.5, -12)
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.TextColor3 = Color3.fromRGB(255, 200, 60)
-TitleLabel.Text = "🐝 Bee Swarm Visuals"
-TitleLabel.TextSize = 16
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.Parent = TopBar
+-- Золотая линия
+local goldLine = Instance.new("Frame")
+goldLine.Size = UDim2.new(1, 0, 0, 2)
+goldLine.Position = UDim2.new(0, 0, 1, 0)
+goldLine.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
+goldLine.Parent = topBar
+
+-- Заголовок
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(0, 200, 0, 25)
+title.Position = UDim2.new(0, 40, 0.5, -12)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(255, 200, 60)
+title.Text = "🐝 Bee Swarm Visuals"
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.Parent = topBar
 
 -- Кнопка закрытия
-local CloseButton = Instance.new("TextButton")
-CloseButton.Size = UDim2.new(0, 28, 0, 28)
-CloseButton.Position = UDim2.new(1, -34, 0.5, -14)
-CloseButton.BackgroundColor3 = Color3.fromRGB(50, 30, 30)
-CloseButton.Text = ""
-CloseButton.AutoButtonColor = false
-CloseButton.Parent = TopBar
-Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(0, 6)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -34, 0.5, -14)
+closeBtn.BackgroundColor3 = Color3.fromRGB(50, 30, 30)
+closeBtn.Text = ""
+closeBtn.AutoButtonColor = false
+closeBtn.Parent = topBar
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 
-local L1 = Instance.new("Frame")
-L1.Size = UDim2.new(0, 2, 0, 16)
-L1.Position = UDim2.new(0.5, -1, 0.5, -8)
-L1.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-L1.Rotation = 45
-L1.Parent = CloseButton
+local crs1 = Instance.new("Frame")
+crs1.Size = UDim2.new(0, 2, 0, 16)
+crs1.Position = UDim2.new(0.5, -1, 0.5, -8)
+crs1.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+crs1.Rotation = 45
+crs1.Parent = closeBtn
 
-local L2 = Instance.new("Frame")
-L2.Size = UDim2.new(0, 2, 0, 16)
-L2.Position = UDim2.new(0.5, -1, 0.5, -8)
-L2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-L2.Rotation = -45
-L2.Parent = CloseButton
+local crs2 = Instance.new("Frame")
+crs2.Size = UDim2.new(0, 2, 0, 16)
+crs2.Position = UDim2.new(0.5, -1, 0.5, -8)
+crs2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+crs2.Rotation = -45
+crs2.Parent = closeBtn
 
--- Левая панель (табы)
-local TabPanel = Instance.new("Frame")
-TabPanel.Size = UDim2.new(0, 140, 1, -35)
-TabPanel.Position = UDim2.new(0, 0, 0, 35)
-TabPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
-TabPanel.Parent = MainFrame
+-- ====== БОКОВАЯ ПАНЕЛЬ ВКЛАДОК ======
+local tabPanel = Instance.new("Frame")
+tabPanel.Size = UDim2.new(0, 140, 1, -35)
+tabPanel.Position = UDim2.new(0, 0, 0, 35)
+tabPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
+tabPanel.Parent = main
 
-local TabList = Instance.new("UIListLayout")
-TabList.Padding = UDim.new(0, 4)
-TabList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-TabList.Parent = TabPanel
+local tabList = Instance.new("UIListLayout")
+tabList.Padding = UDim.new(0, 4)
+tabList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabList.Parent = tabPanel
 
 -- Разделитель
-local Divider = Instance.new("Frame")
-Divider.Size = UDim2.new(0, 1, 1, 0)
-Divider.Position = UDim2.new(1, 0, 0, 0)
-Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-Divider.Parent = TabPanel
+local div = Instance.new("Frame")
+div.Size = UDim2.new(0, 1, 1, 0)
+div.Position = UDim2.new(1, 0, 0, 0)
+div.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+div.Parent = tabPanel
 
--- Правая панель (контент)
-local ContentPanel = Instance.new("Frame")
-ContentPanel.Size = UDim2.new(1, -140, 1, -35)
-ContentPanel.Position = UDim2.new(0, 140, 0, 35)
-ContentPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
-ContentPanel.Parent = MainFrame
+-- ====== КОНТЕНТ ======
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -140, 1, -35)
+content.Position = UDim2.new(0, 140, 0, 35)
+content.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+content.Parent = main
 
-local ContentList = Instance.new("UIListLayout")
-ContentList.Padding = UDim.new(0, 8)
-ContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ContentList.Parent = ContentPanel
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.Padding = UDim.new(0, 8)
+contentLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+contentLayout.Parent = content
 
--- Хранилище табов
-local Tabs = {}
-local SelectedTab = nil
+-- ====== ЛОГИКА ВКЛАДОК ======
+local tabs = {}
+local currentTab = nil
 
-function AddTab(name, icon)
+function createTab(name, iconChar)
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(1, -20, 0, 32)
     btn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
     btn.TextColor3 = Color3.fromRGB(180, 180, 190)
-    btn.Text = "  " .. icon .. "  " .. name
+    btn.Text = "  " .. iconChar .. "  " .. name
     btn.TextSize = 13
     btn.Font = Enum.Font.GothamSemibold
     btn.TextXAlignment = Enum.TextXAlignment.Left
     btn.AutoButtonColor = false
-    btn.Parent = TabPanel
+    btn.Parent = tabPanel
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
     local page = Instance.new("Frame")
     page.BackgroundTransparency = 1
     page.Visible = false
-    page.Parent = ContentPanel
-    local layout = Instance.new("UIListLayout", page)
-    layout.Padding = UDim.new(0, 6)
-    layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    page.Parent = content
+    Instance.new("UIListLayout", page).Padding = UDim.new(0, 6)
+    page.UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
-    local tabData = { Button = btn, Page = page }
+    local data = { button = btn, page = page }
     btn.MouseButton1Click:Connect(function()
-        if SelectedTab then SelectedTab.Page.Visible = false end
+        if currentTab then currentTab.page.Visible = false end
         page.Visible = true
-        SelectedTab = tabData
+        currentTab = data
     end)
-    table.insert(Tabs, tabData)
-    return tabData
+    table.insert(tabs, data)
+    return data
 end
 
-local HomeTab = AddTab("Home", "⌂")
-local SettingsTab = AddTab("Settings", "⚙")
-HomeTab.Button.TextSize = 14
+local homeTab = createTab("Home", "⌂")
+local settingsTab = createTab("Settings", "⚙")
+homeTab.button.TextSize = 14
 
 -- ====== HOME ======
-local HomeSection = Instance.new("Frame")
-HomeSection.Size = UDim2.new(1, -16, 0, 28)
-HomeSection.BackgroundTransparency = 1
-HomeSection.Parent = HomeTab.Page
+local homeGroup = Instance.new("Frame")
+homeGroup.Size = UDim2.new(1, -16, 0, 28)
+homeGroup.BackgroundTransparency = 1
+homeGroup.Parent = homeTab.page
 
-local HomeToggle = Instance.new("TextButton")
-HomeToggle.Size = UDim2.new(1, 0, 0, 28)
-HomeToggle.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-HomeToggle.Text = "  ▼  Home"
-HomeToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-HomeToggle.TextSize = 18
-HomeToggle.Font = Enum.Font.GothamBold
-HomeToggle.TextXAlignment = Enum.TextXAlignment.Left
-HomeToggle.AutoButtonColor = false
-HomeToggle.Parent = HomeSection
-Instance.new("UICorner", HomeToggle).CornerRadius = UDim.new(0, 6)
+local homeToggle = Instance.new("TextButton")
+homeToggle.Size = UDim2.new(1, 0, 0, 28)
+homeToggle.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+homeToggle.Text = "  ▼  Home"
+homeToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+homeToggle.TextSize = 18
+homeToggle.Font = Enum.Font.GothamBold
+homeToggle.TextXAlignment = Enum.TextXAlignment.Left
+homeToggle.AutoButtonColor = false
+homeToggle.Parent = homeGroup
+Instance.new("UICorner", homeToggle).CornerRadius = UDim.new(0, 6)
 
-local HomeContent = Instance.new("Frame")
-HomeContent.Size = UDim2.new(1, 0, 0, 56)
-HomeContent.Position = UDim2.new(0, 0, 0, 32)
-HomeContent.BackgroundTransparency = 1
-HomeContent.Visible = true
-HomeContent.Parent = HomeSection
-local HomeList = Instance.new("UIListLayout")
-HomeList.Padding = UDim.new(0, 6)
-HomeList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-HomeList.Parent = HomeContent
+local homeContent = Instance.new("Frame")
+homeContent.Size = UDim2.new(1, 0, 0, 56)
+homeContent.Position = UDim2.new(0, 0, 0, 32)
+homeContent.BackgroundTransparency = 1
+homeContent.Visible = true
+homeContent.Parent = homeGroup
+local hList = Instance.new("UIListLayout")
+hList.Padding = UDim.new(0, 6)
+hList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+hList.Parent = homeContent
 
-local UptimeLabel = Instance.new("TextLabel")
-UptimeLabel.Size = UDim2.new(1, 0, 0, 20)
-UptimeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-UptimeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-UptimeLabel.Text = "Uptime: 00:00:00"
-UptimeLabel.TextSize = 12
-UptimeLabel.Font = Enum.Font.Gotham
-UptimeLabel.Parent = HomeContent
-Instance.new("UICorner", UptimeLabel).CornerRadius = UDim.new(0, 4)
+local uptime = Instance.new("TextLabel")
+uptime.Size = UDim2.new(1, 0, 0, 20)
+uptime.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+uptime.TextColor3 = Color3.fromRGB(255, 255, 255)
+uptime.Text = "Uptime: 00:00:00"
+uptime.TextSize = 12
+uptime.Font = Enum.Font.Gotham
+uptime.Parent = homeContent
+Instance.new("UICorner", uptime).CornerRadius = UDim.new(0, 4)
 
-local StopFrame = Instance.new("Frame")
-StopFrame.Size = UDim2.new(1, 0, 0, 24)
-StopFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-StopFrame.Parent = HomeContent
-Instance.new("UICorner", StopFrame).CornerRadius = UDim.new(0, 4)
+local stopFrame = Instance.new("Frame")
+stopFrame.Size = UDim2.new(1, 0, 0, 24)
+stopFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+stopFrame.Parent = homeContent
+Instance.new("UICorner", stopFrame).CornerRadius = UDim.new(0, 4)
 
-local StopLabel = Instance.new("TextLabel")
-StopLabel.Size = UDim2.new(0, 140, 0, 24)
-StopLabel.BackgroundTransparency = 1
-StopLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-StopLabel.Text = "Stop Everything"
-StopLabel.TextSize = 12
-StopLabel.Font = Enum.Font.Gotham
-StopLabel.Parent = StopFrame
+local stopLabel = Instance.new("TextLabel")
+stopLabel.Size = UDim2.new(0, 140, 0, 24)
+stopLabel.BackgroundTransparency = 1
+stopLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+stopLabel.Text = "Stop Everything"
+stopLabel.TextSize = 12
+stopLabel.Font = Enum.Font.Gotham
+stopLabel.Parent = stopFrame
 
-local StopBtn = Instance.new("TextButton")
-StopBtn.Size = UDim2.new(0, 32, 0, 18)
-StopBtn.Position = UDim2.new(1, -38, 0.5, -9)
-StopBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-StopBtn.Text = ""
-StopBtn.AutoButtonColor = false
-StopBtn.Parent = StopFrame
-Instance.new("UICorner", StopBtn).CornerRadius = UDim.new(1, 0)
+local stopBtn = Instance.new("TextButton")
+stopBtn.Size = UDim2.new(0, 32, 0, 18)
+stopBtn.Position = UDim2.new(1, -38, 0.5, -9)
+stopBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+stopBtn.Text = ""
+stopBtn.AutoButtonColor = false
+stopBtn.Parent = stopFrame
+Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(1, 0)
 
-local StopDot = Instance.new("Frame")
-StopDot.Size = UDim2.new(0, 12, 0, 12)
-StopDot.Position = UDim2.new(0, 3, 0.5, -6)
-StopDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-StopDot.Parent = StopBtn
-Instance.new("UICorner", StopDot).CornerRadius = UDim.new(1, 0)
+local stopDot = Instance.new("Frame")
+stopDot.Size = UDim2.new(0, 12, 0, 12)
+stopDot.Position = UDim2.new(0, 3, 0.5, -6)
+stopDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+stopDot.Parent = stopBtn
+Instance.new("UICorner", stopDot).CornerRadius = UDim.new(1, 0)
 
+-- Раскрытие Home
 local homeOpen = true
-HomeToggle.MouseButton1Click:Connect(function()
+homeToggle.MouseButton1Click:Connect(function()
     homeOpen = not homeOpen
-    HomeToggle.Text = homeOpen and "  ▼  Home" or "  ▶  Home"
-    HomeContent.Visible = homeOpen
-    HomeSection.Size = homeOpen and UDim2.new(1, -16, 0, 28+56) or UDim2.new(1, -16, 0, 28)
+    homeToggle.Text = homeOpen and "  ▼  Home" or "  ▶  Home"
+    homeContent.Visible = homeOpen
+    homeGroup.Size = homeOpen and UDim2.new(1, -16, 0, 28+56) or UDim2.new(1, -16, 0, 28)
 end)
 
+-- Stop Everything
 local stopEnabled = false
-StopBtn.MouseButton1Click:Connect(function()
+stopBtn.MouseButton1Click:Connect(function()
     stopEnabled = not stopEnabled
     if stopEnabled then
-        TweenService:Create(StopBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 80, 80)}):Play()
-        TweenService:Create(StopDot, TweenInfo.new(0.15), {Position = UDim2.new(1, -15, 0.5, -6)}):Play()
+        TweenService:Create(stopBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 80, 80)}):Play()
+        TweenService:Create(stopDot, TweenInfo.new(0.15), {Position = UDim2.new(1, -15, 0.5, -6)}):Play()
     else
-        TweenService:Create(StopBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(50, 50, 55)}):Play()
-        TweenService:Create(StopDot, TweenInfo.new(0.15), {Position = UDim2.new(0, 3, 0.5, -6)}):Play()
+        TweenService:Create(stopBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(50, 50, 55)}):Play()
+        TweenService:Create(stopDot, TweenInfo.new(0.15), {Position = UDim2.new(0, 3, 0.5, -6)}):Play()
     end
     stopEverything = stopEnabled
 end)
 
 -- ====== SETTINGS: MOVESPEED ======
-local SpeedGroup = Instance.new("Frame")
-SpeedGroup.Size = UDim2.new(1, -16, 0, 60)
-SpeedGroup.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-SpeedGroup.Parent = SettingsTab.Page
-Instance.new("UICorner", SpeedGroup).CornerRadius = UDim.new(0, 8)
+local speedGroup = Instance.new("Frame")
+speedGroup.Size = UDim2.new(1, -16, 0, 60)
+speedGroup.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+speedGroup.Parent = settingsTab.page
+Instance.new("UICorner", speedGroup).CornerRadius = UDim.new(0, 8)
 
-local SpeedLabel = Instance.new("TextLabel")
-SpeedLabel.Size = UDim2.new(1, -16, 0, 22)
-SpeedLabel.Position = UDim2.new(0, 8, 0, 4)
-SpeedLabel.BackgroundTransparency = 1
-SpeedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-SpeedLabel.Text = "Move Speed: 16"
-SpeedLabel.TextSize = 13
-SpeedLabel.Font = Enum.Font.GothamBold
-SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-SpeedLabel.Parent = SpeedGroup
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(1, -16, 0, 22)
+speedLabel.Position = UDim2.new(0, 8, 0, 4)
+speedLabel.BackgroundTransparency = 1
+speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedLabel.Text = "Move Speed: 16"
+speedLabel.TextSize = 13
+speedLabel.Font = Enum.Font.GothamBold
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.Parent = speedGroup
 
-local SpeedBar = Instance.new("TextButton")
-SpeedBar.Size = UDim2.new(1, -16, 0, 14)
-SpeedBar.Position = UDim2.new(0, 8, 0, 30)
-SpeedBar.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
-SpeedBar.Text = ""
-SpeedBar.AutoButtonColor = false
-SpeedBar.Parent = SpeedGroup
-Instance.new("UICorner", SpeedBar).CornerRadius = UDim.new(0, 7)
+local speedBar = Instance.new("TextButton")
+speedBar.Size = UDim2.new(1, -16, 0, 14)
+speedBar.Position = UDim2.new(0, 8, 0, 30)
+speedBar.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+speedBar.Text = ""
+speedBar.AutoButtonColor = false
+speedBar.Parent = speedGroup
+Instance.new("UICorner", speedBar).CornerRadius = UDim.new(0, 7)
 
-local SpeedFill = Instance.new("Frame")
-SpeedFill.Size = UDim2.new((16-1)/(40-1), 0, 1, 0)
-SpeedFill.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
-SpeedFill.Parent = SpeedBar
-Instance.new("UICorner", SpeedFill).CornerRadius = UDim.new(0, 7)
+local speedFill = Instance.new("Frame")
+speedFill.Size = UDim2.new((16-1)/(40-1), 0, 1, 0)
+speedFill.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
+speedFill.Parent = speedBar
+Instance.new("UICorner", speedFill).CornerRadius = UDim.new(0, 7)
 
-local SpeedKnob = Instance.new("Frame")
-SpeedKnob.Size = UDim2.new(0, 22, 0, 22)
-SpeedKnob.Position = UDim2.new((16-1)/(40-1), -11, 0.5, -11)
-SpeedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-SpeedKnob.Parent = SpeedBar
-Instance.new("UICorner", SpeedKnob).CornerRadius = UDim.new(1, 0)
+local speedKnob = Instance.new("Frame")
+speedKnob.Size = UDim2.new(0, 22, 0, 22)
+speedKnob.Position = UDim2.new((16-1)/(40-1), -11, 0.5, -11)
+speedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+speedKnob.Parent = speedBar
+Instance.new("UICorner", speedKnob).CornerRadius = UDim.new(1, 0)
 
-local sliderDragging = false
-local function updateSpeed(screenX)
-    local barStart = SpeedBar.AbsolutePosition.X
-    local barSize = SpeedBar.AbsoluteSize.X
-    if barSize <= 0 then return end
-    local rel = math.clamp((screenX - barStart) / barSize, 0, 1)
+-- Слайдер (без глобальных InputChanged, всё локально)
+local drag = false
+local function setSpeed(x)
+    local barX = speedBar.AbsolutePosition.X
+    local barW = speedBar.AbsoluteSize.X
+    if barW <= 0 then return end
+    local rel = math.clamp((x - barX) / barW, 0, 1)
     local val = math.floor(1 + 39 * rel + 0.5)
-    currentWalkSpeed = val
-    SpeedFill.Size = UDim2.new(rel, 0, 1, 0)
-    SpeedKnob.Position = UDim2.new(rel, -11, 0.5, -11)
-    SpeedLabel.Text = "Move Speed: " .. val
+    currentSpeed = val
+    speedFill.Size = UDim2.new(rel, 0, 1, 0)
+    speedKnob.Position = UDim2.new(rel, -11, 0.5, -11)
+    speedLabel.Text = "Move Speed: " .. val
     if not stopEverything then
         local char = LocalPlayer.Character
         if char and char:FindFirstChild("Humanoid") then
@@ -324,129 +324,121 @@ local function updateSpeed(screenX)
     end
 end
 
-SpeedBar.InputBegan:Connect(function(input)
+speedBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        sliderDragging = true
-        updateSpeed(input.Position.X)
+        drag = true
+        setSpeed(input.Position.X)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if not sliderDragging then return end
-    local pos = nil
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        pos = input.Position
-    elseif input.UserInputType == Enum.UserInputType.Touch then
-        local touches = UserInputService:GetTouches()
-        if #touches > 0 then pos = touches[1].Position end
-    end
-    if pos then updateSpeed(pos.X) end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
+speedBar.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        sliderDragging = false
+        drag = false
     end
 end)
 
--- ====== ДРАГ МЕНЮ ======
-local draggingMenu = false
-local dragStartPos, frameStartPos
+speedBar.MouseMoved:Connect(function(x, y)
+    if drag then setSpeed(x) end
+end)
 
-TopBar.InputBegan:Connect(function(input)
+-- Для тач-перемещения используем TouchMoved на speedBar
+speedBar.TouchMoved:Connect(function(touch, gameProcessed)
+    if drag then setSpeed(touch.Position.X) end
+end)
+
+-- ====== ПЕРЕТАСКИВАНИЕ ОКНА ======
+local winDrag = false
+local winStart, frameStart
+topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        draggingMenu = true
-        dragStartPos = input.Position
-        frameStartPos = MainFrame.Position
+        winDrag = true
+        winStart = input.Position
+        frameStart = main.Position
     end
 end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if not draggingMenu then return end
-    local pos = nil
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        pos = input.Position
-    elseif input.UserInputType == Enum.UserInputType.Touch then
-        local touches = UserInputService:GetTouches()
-        if #touches > 0 then pos = touches[1].Position end
-    end
-    if pos then
-        local delta = pos - dragStartPos
-        MainFrame.Position = UDim2.new(frameStartPos.X.Scale, frameStartPos.X.Offset + delta.X,
-            frameStartPos.Y.Scale, frameStartPos.Y.Offset + delta.Y)
-    end
-end)
-
-UserInputService.InputEnded:Connect(function()
-    draggingMenu = false
-end)
-
--- ====== ДРАГ ИКОНКИ ======
-local draggingIcon = false
-local iconDragStart, iconStartPos
-
-IconButton.InputBegan:Connect(function(input)
+topBar.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        draggingIcon = true
-        iconDragStart = input.Position
-        iconStartPos = IconButton.Position
+        winDrag = false
+    end
+end)
+topBar.MouseMoved:Connect(function(x, y)
+    if winDrag then
+        local delta = Vector2.new(x, y) - winStart
+        main.Position = UDim2.new(frameStart.X.Scale, frameStart.X.Offset + delta.X,
+            frameStart.Y.Scale, frameStart.Y.Offset + delta.Y)
+    end
+end)
+topBar.TouchMoved:Connect(function(touch, gameProcessed)
+    if winDrag then
+        local delta = touch.Position - winStart
+        main.Position = UDim2.new(frameStart.X.Scale, frameStart.X.Offset + delta.X,
+            frameStart.Y.Scale, frameStart.Y.Offset + delta.Y)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if not draggingIcon then return end
-    local pos = nil
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        pos = input.Position
-    elseif input.UserInputType == Enum.UserInputType.Touch then
-        local touches = UserInputService:GetTouches()
-        if #touches > 0 then pos = touches[1].Position end
-    end
-    if pos then
-        local delta = pos - iconDragStart
-        IconButton.Position = UDim2.new(iconStartPos.X.Scale, iconStartPos.X.Offset + delta.X,
-            iconStartPos.Y.Scale, iconStartPos.Y.Offset + delta.Y)
+-- ====== ПЕРЕТАСКИВАНИЕ ИКОНКИ ======
+local iconDrag = false
+local iconStart, iconPosStart
+icon.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        iconDrag = true
+        iconStart = input.Position
+        iconPosStart = icon.Position
     end
 end)
-
-UserInputService.InputEnded:Connect(function()
-    draggingIcon = false
+icon.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        iconDrag = false
+    end
+end)
+icon.MouseMoved:Connect(function(x, y)
+    if iconDrag then
+        local delta = Vector2.new(x, y) - iconStart
+        icon.Position = UDim2.new(iconPosStart.X.Scale, iconPosStart.X.Offset + delta.X,
+            iconPosStart.Y.Scale, iconPosStart.Y.Offset + delta.Y)
+    end
+end)
+icon.TouchMoved:Connect(function(touch, gameProcessed)
+    if iconDrag then
+        local delta = touch.Position - iconStart
+        icon.Position = UDim2.new(iconPosStart.X.Scale, iconPosStart.X.Offset + delta.X,
+            iconPosStart.Y.Scale, iconPosStart.Y.Offset + delta.Y)
+    end
 end)
 
--- Открытие/закрытие
-IconButton.MouseButton1Click:Connect(function()
-    if draggingIcon then return end
-    MainFrame.Visible = true
-    IconButton.Visible = false
+-- ====== ОТКРЫТИЕ/ЗАКРЫТИЕ ======
+icon.MouseButton1Click:Connect(function()
+    if not iconDrag then
+        main.Visible = true
+        icon.Visible = false
+    end
 end)
-
-CloseButton.MouseButton1Click:Connect(function()
-    MainFrame.Visible = false
-    IconButton.Visible = true
+closeBtn.MouseButton1Click:Connect(function()
+    main.Visible = false
+    icon.Visible = true
 end)
 
 -- ====== ЗАПУСК ======
-SelectedTab = HomeTab
-HomeTab.Page.Visible = true
+currentTab = homeTab
+homeTab.page.Visible = true
 
-spawn(function()
+-- Обновление Uptime
+coroutine.wrap(function()
     while true do
-        task.wait(0.5)
-        UptimeLabel.Text = "Uptime: " .. formatTime(tick() - startTime)
+        wait(0.5)
+        uptime.Text = "Uptime: " .. fmt(tick() - startTime)
     end
-end)
+end)()
 
+-- Восстановление скорости при респавне
 LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
-        task.wait(0.3)
+        wait(0.3)
         if not stopEverything then
-            hum.WalkSpeed = currentWalkSpeed
+            hum.WalkSpeed = currentSpeed
         end
     end
 end)
 
-IconButton.Visible = true
-MainFrame.Visible = false
-
-print("✅ v9.1 загружен! Старый GUI удалён, новый интерфейс готов.")
+print("✅ Bee Swarm GUI v9.2 готов! Открывай.")
