@@ -1,6 +1,6 @@
 --[[
     Bee Swarm Simulator - Красивый GUI (100% телефон)
-    Версия 11.0 – только MouseClick и глобальный Touch
+    Версия 11.1 – фикс мобильных касаний (Activated вместо MouseButton1Click)
 ]]
 
 local CoreGui = game:GetService("CoreGui")
@@ -158,7 +158,7 @@ function createTab(name, iconChar)
     page.UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
     local data = { button = btn, page = page }
-    btn.MouseButton1Click:Connect(function()
+    btn.Activated:Connect(function()  -- ИСПРАВЛЕНО: Activated вместо MouseButton1Click
         if currentTab then currentTab.page.Visible = false end
         page.Visible = true
         currentTab = data
@@ -242,7 +242,7 @@ stopDot.Parent = stopBtn
 Instance.new("UICorner", stopDot).CornerRadius = UDim.new(1, 0)
 
 local homeOpen = true
-homeToggle.MouseButton1Click:Connect(function()
+homeToggle.Activated:Connect(function()  -- ИСПРАВЛЕНО
     homeOpen = not homeOpen
     homeToggle.Text = homeOpen and "  ▼  Home" or "  ▶  Home"
     homeContent.Visible = homeOpen
@@ -250,7 +250,7 @@ homeToggle.MouseButton1Click:Connect(function()
 end)
 
 local stopEnabled = false
-stopBtn.MouseButton1Click:Connect(function()
+stopBtn.Activated:Connect(function()  -- ИСПРАВЛЕНО
     stopEnabled = not stopEnabled
     if stopEnabled then
         TweenService:Create(stopBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 80, 80)}):Play()
@@ -302,7 +302,7 @@ speedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 speedKnob.Parent = speedBar
 Instance.new("UICorner", speedKnob).CornerRadius = UDim.new(1, 0)
 
--- Логика слайдера через глобальный TouchMoved
+-- Логика слайдера через глобальный TouchMoved (уже с поддержкой тача)
 local sliderActive = false
 local function setSpeedFromX(x)
     local barX = speedBar.AbsolutePosition.X
@@ -322,7 +322,6 @@ local function setSpeedFromX(x)
     end
 end
 
--- Запуск слайдера при касании на speedBar
 speedBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         sliderActive = true
@@ -330,21 +329,19 @@ speedBar.InputBegan:Connect(function(input)
     end
 end)
 
--- Глобальное отслеживание перемещения касания
 UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
     if sliderActive then
         setSpeedFromX(touch.Position.X)
     end
 end)
 
--- Остановка слайдера при отпускании
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         sliderActive = false
     end
 end)
 
--- ====== ПЕРЕТАСКИВАНИЕ ОКНА ЗА ВЕРХНЮЮ ПАНЕЛЬ ======
+-- ====== ПЕРЕТАСКИВАНИЕ ОКНА ЗА ВЕРХНЮЮ ПАНЕЛЬ (уже с Touch) ======
 local windowActive = false
 local winStartPos, winStartFrame
 
@@ -370,13 +367,13 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- ====== ОТКРЫТИЕ / ЗАКРЫТИЕ (ТОЛЬКО MouseButton1Click) ======
-icon.MouseButton1Click:Connect(function()
+-- ====== ОТКРЫТИЕ / ЗАКРЫТИЕ (ИСПРАВЛЕНО на Activated) ======
+icon.Activated:Connect(function()
     main.Visible = true
     icon.Visible = false
 end)
 
-closeBtn.MouseButton1Click:Connect(function()
+closeBtn.Activated:Connect(function()
     main.Visible = false
     icon.Visible = true
 end)
@@ -402,4 +399,4 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
-print("✅ v11.0 – должно работать. Нажми на иконку.")
+print("✅ v11.1 – фикс мобильных касаний. Нажми на иконку, GUI откроется.")
