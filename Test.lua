@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 9.0 (Красивый дизайн + работающий слайдер)
+    Версия: 9.1 (Гарантированно красивый дизайн)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -10,11 +10,15 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 
+-- Удаляем старый GUI, если он есть
+if CoreGui:FindFirstChild("BeeSwarmVisuals") then
+    CoreGui.BeeSwarmVisuals:Destroy()
+end
+
 local startTime = tick()
 local stopEverything = false
 local currentWalkSpeed = 16
 
--- Форматирование времени
 local function formatTime(seconds)
     local hours = math.floor(seconds / 3600)
     local mins = math.floor((seconds % 3600) / 60)
@@ -22,7 +26,7 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, mins, secs)
 end
 
--- ====== GUI ======
+-- ====== СОЗДАНИЕ GUI ======
 local ClickGui = Instance.new("ScreenGui")
 ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
@@ -52,21 +56,19 @@ MainFrame.Visible = false
 MainFrame.Parent = ClickGui
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 6)
 
--- Верхняя панель (перетаскивание)
+-- Верхняя панель
 local TopBar = Instance.new("Frame")
 TopBar.Size = UDim2.new(1, 0, 0, 35)
 TopBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
 TopBar.Parent = MainFrame
 Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 6)
 
--- Золотая линия
 local GoldLine = Instance.new("Frame")
 GoldLine.Size = UDim2.new(1, 0, 0, 2)
 GoldLine.Position = UDim2.new(0, 0, 1, 0)
 GoldLine.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
 GoldLine.Parent = TopBar
 
--- Заголовок
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(0, 180, 0, 25)
 TitleLabel.Position = UDim2.new(0, 38, 0.5, -12)
@@ -88,19 +90,19 @@ CloseButton.AutoButtonColor = false
 CloseButton.Parent = TopBar
 Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(0, 6)
 
-local Line1 = Instance.new("Frame")
-Line1.Size = UDim2.new(0, 2, 0, 16)
-Line1.Position = UDim2.new(0.5, -1, 0.5, -8)
-Line1.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-Line1.Rotation = 45
-Line1.Parent = CloseButton
+local L1 = Instance.new("Frame")
+L1.Size = UDim2.new(0, 2, 0, 16)
+L1.Position = UDim2.new(0.5, -1, 0.5, -8)
+L1.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+L1.Rotation = 45
+L1.Parent = CloseButton
 
-local Line2 = Instance.new("Frame")
-Line2.Size = UDim2.new(0, 2, 0, 16)
-Line2.Position = UDim2.new(0.5, -1, 0.5, -8)
-Line2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-Line2.Rotation = -45
-Line2.Parent = CloseButton
+local L2 = Instance.new("Frame")
+L2.Size = UDim2.new(0, 2, 0, 16)
+L2.Position = UDim2.new(0.5, -1, 0.5, -8)
+L2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+L2.Rotation = -45
+L2.Parent = CloseButton
 
 -- Левая панель (табы)
 local TabPanel = Instance.new("Frame")
@@ -168,7 +170,6 @@ function AddTab(name, icon)
     return tabData
 end
 
--- Создаём вкладки
 local HomeTab = AddTab("Home", "⌂")
 local SettingsTab = AddTab("Settings", "⚙")
 HomeTab.Button.TextSize = 14
@@ -179,7 +180,6 @@ HomeSection.Size = UDim2.new(1, -16, 0, 28)
 HomeSection.BackgroundTransparency = 1
 HomeSection.Parent = HomeTab.Page
 
--- Стрелка раскрытия
 local HomeToggle = Instance.new("TextButton")
 HomeToggle.Size = UDim2.new(1, 0, 0, 28)
 HomeToggle.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -192,19 +192,17 @@ HomeToggle.AutoButtonColor = false
 HomeToggle.Parent = HomeSection
 Instance.new("UICorner", HomeToggle).CornerRadius = UDim.new(0, 6)
 
--- Контент Home
 local HomeContent = Instance.new("Frame")
 HomeContent.Size = UDim2.new(1, 0, 0, 56)
 HomeContent.Position = UDim2.new(0, 0, 0, 32)
 HomeContent.BackgroundTransparency = 1
 HomeContent.Visible = true
 HomeContent.Parent = HomeSection
-local HomeContentList = Instance.new("UIListLayout")
-HomeContentList.Padding = UDim.new(0, 6)
-HomeContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
-HomeContentList.Parent = HomeContent
+local HomeList = Instance.new("UIListLayout")
+HomeList.Padding = UDim.new(0, 6)
+HomeList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+HomeList.Parent = HomeContent
 
--- Uptime
 local UptimeLabel = Instance.new("TextLabel")
 UptimeLabel.Size = UDim2.new(1, 0, 0, 20)
 UptimeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -215,7 +213,6 @@ UptimeLabel.Font = Enum.Font.Gotham
 UptimeLabel.Parent = HomeContent
 Instance.new("UICorner", UptimeLabel).CornerRadius = UDim.new(0, 4)
 
--- Stop Everything
 local StopFrame = Instance.new("Frame")
 StopFrame.Size = UDim2.new(1, 0, 0, 24)
 StopFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -247,16 +244,14 @@ StopDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 StopDot.Parent = StopBtn
 Instance.new("UICorner", StopDot).CornerRadius = UDim.new(1, 0)
 
--- Логика раскрытия Home
 local homeOpen = true
 HomeToggle.MouseButton1Click:Connect(function()
     homeOpen = not homeOpen
     HomeToggle.Text = homeOpen and "  ▼  Home" or "  ▶  Home"
     HomeContent.Visible = homeOpen
-    HomeSection.Size = homeOpen and UDim2.new(1, -16, 0, 28 + 56) or UDim2.new(1, -16, 0, 28)
+    HomeSection.Size = homeOpen and UDim2.new(1, -16, 0, 28+56) or UDim2.new(1, -16, 0, 28)
 end)
 
--- Stop Everything
 local stopEnabled = false
 StopBtn.MouseButton1Click:Connect(function()
     stopEnabled = not stopEnabled
@@ -310,7 +305,6 @@ SpeedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 SpeedKnob.Parent = SpeedBar
 Instance.new("UICorner", SpeedKnob).CornerRadius = UDim.new(1, 0)
 
--- Логика слайдера (уже рабочая)
 local sliderDragging = false
 local function updateSpeed(screenX)
     local barStart = SpeedBar.AbsolutePosition.X
@@ -455,4 +449,4 @@ end)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ v9.0 загружен! Красота и функционал вместе.")
+print("✅ v9.1 загружен! Старый GUI удалён, новый интерфейс готов.")
