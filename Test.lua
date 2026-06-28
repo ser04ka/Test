@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 6.3 (Красивый рабочий слайдер MoveSpeed)
+    Версия: 6.4 (Слайдер работает на телефоне!)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -228,7 +228,7 @@ function UpdateCanvasSize()
     end
 end
 
--- ====== КРАСИВЫЙ СЛАЙДЕР ======
+-- ====== УНИВЕРСАЛЬНЫЙ СЛАЙДЕР (телефон + ПК) ======
 function CreateSlider(tabData, name, min, max, default, suffix, callback)
     local SliderFrame = Instance.new("Frame")
     SliderFrame.Size = UDim2.new(1, -10, 0, 60)
@@ -250,14 +250,14 @@ function CreateSlider(tabData, name, min, max, default, suffix, callback)
     SliderLabel.TextXAlignment = Enum.TextXAlignment.Left
     SliderLabel.Parent = SliderFrame
 
-    -- Полоса слайдера
+    -- Полоса слайдера (делаем повыше для пальца)
     local SliderBar = Instance.new("Frame")
-    SliderBar.Size = UDim2.new(1, -20, 0, 8)
+    SliderBar.Size = UDim2.new(1, -20, 0, 12)  -- толще для тача
     SliderBar.Position = UDim2.new(0, 10, 0, 32)
     SliderBar.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
     SliderBar.BorderSizePixel = 0
     SliderBar.Parent = SliderFrame
-    Instance.new("UICorner", SliderBar).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", SliderBar).CornerRadius = UDim.new(0, 6)
 
     -- Заполнение
     local fillPercent = (default - min) / (max - min)
@@ -266,54 +266,82 @@ function CreateSlider(tabData, name, min, max, default, suffix, callback)
     SliderFill.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
     SliderFill.BorderSizePixel = 0
     SliderFill.Parent = SliderBar
-    Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(0, 6)
 
     -- Кружок-ползунок
     local SliderKnob = Instance.new("Frame")
-    SliderKnob.Size = UDim2.new(0, 16, 0, 16)
-    SliderKnob.Position = UDim2.new(fillPercent, -8, 0.5, -8)
+    SliderKnob.Size = UDim2.new(0, 20, 0, 20)  -- крупнее для пальца
+    SliderKnob.Position = UDim2.new(fillPercent, -10, 0.5, -10)
     SliderKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     SliderKnob.BorderSizePixel = 0
     SliderKnob.Parent = SliderBar
     Instance.new("UICorner", SliderKnob).CornerRadius = UDim.new(1, 0)
 
-    -- Невидимая кнопка для захвата
-    local SliderButton = Instance.new("TextButton")
-    SliderButton.Size = UDim2.new(1, 0, 0, 30)
-    SliderButton.Position = UDim2.new(0, 0, 0, 25)
-    SliderButton.BackgroundTransparency = 1
-    SliderButton.Text = ""
-    SliderButton.Parent = SliderFrame
-
-    local dragging = false
     local currentValue = default
+    local dragging = false
 
-    local function UpdateSlider(input)
+    -- Функция обновления позиции
+    local function updateFromPosition(inputPosition)
         local barSize = SliderBar.AbsoluteSize.X
-        local relativePos = math.clamp((input.Position.X - SliderBar.AbsolutePosition.X) / barSize, 0, 1)
+        if barSize <= 0 then return end
+        local relativePos = math.clamp((inputPosition.X - SliderBar.AbsolutePosition.X) / barSize, 0, 1)
         currentValue = math.floor(min + (max - min) * relativePos + 0.5)
         SliderFill.Size = UDim2.new(relativePos, 0, 1, 0)
-        SliderKnob.Position = UDim2.new(relativePos, -8, 0.5, -8)
+        SliderKnob.Position = UDim2.new(relativePos, -10, 0.5, -10)
         SliderLabel.Text = name .. ": " .. currentValue .. suffix
         callback(currentValue)
     end
 
-    SliderButton.InputBegan:Connect(function(input)
+    -- Начало перетаскивания (тач и мышь)
+    local function startDrag(input)
+        dragging = true
+        updateFromPosition(input.Position)
+    end
+
+    -- Конец перетаскивания
+    local function endDrag(input)
+        dragging = false
+    end
+
+    -- Обработчики для SliderBar (основная зона захвата)
+    SliderBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            UpdateSlider(input)
+            startDrag(input)
         end
     end)
 
+    SliderBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            endDrag(input)
+        end
+    end)
+
+    -- Глобальное отслеживание движения (для тача и мыши)
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            UpdateSlider(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            -- Для тача используем позицию пальца
+            local touches = UserInputService:GetTouches()
+            if #touches > 0 then
+                updateFromPosition(touches[1].Position)
+            elseif input.UserInputType == Enum.UserInputType.MouseMovement then
+                updateFromPosition(input.Position)
+            end
         end
     end)
 
+    -- Также отслеживаем перемещение конкретного тача
+    UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
+        if not dragging then return end
+        updateFromPosition(touch.Position)
+    end)
+
+    -- Завершение при отпускании мыши/тача глобально
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+            if dragging then
+                dragging = false
+            end
         end
     end)
 
@@ -325,7 +353,7 @@ function CreateSlider(tabData, name, min, max, default, suffix, callback)
             currentValue = math.clamp(val, min, max)
             local relativePos = (currentValue - min) / (max - min)
             SliderFill.Size = UDim2.new(relativePos, 0, 1, 0)
-            SliderKnob.Position = UDim2.new(relativePos, -8, 0.5, -8)
+            SliderKnob.Position = UDim2.new(relativePos, -10, 0.5, -10)
             SliderLabel.Text = name .. ": " .. currentValue .. suffix
         end,
         Get = function() return currentValue end
@@ -341,16 +369,21 @@ function CreateButton() end
 local menuDragging = false
 local menuDragStart, menuStartPos
 TopBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         menuDragging = true
         menuDragStart = input.Position
         menuStartPos = MainFrame.Position
         input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then menuDragging = false end end)
     end
 end)
-TopBar.InputChanged:Connect(function(input)
-    if menuDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - menuDragStart
+UserInputService.InputChanged:Connect(function(input)
+    if menuDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local pos = input.Position
+        if input.UserInputType == Enum.UserInputType.Touch then
+            local touches = UserInputService:GetTouches()
+            if #touches > 0 then pos = touches[1].Position end
+        end
+        local delta = pos - menuDragStart
         MainFrame.Position = UDim2.new(menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X, menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y)
     end
 end)
@@ -368,7 +401,12 @@ IconButton.InputBegan:Connect(function(input)
 end)
 UserInputService.InputChanged:Connect(function(input)
     if iconDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - iconDragStart
+        local pos = input.Position
+        if input.UserInputType == Enum.UserInputType.Touch then
+            local touches = UserInputService:GetTouches()
+            if #touches > 0 then pos = touches[1].Position end
+        end
+        local delta = pos - iconDragStart
         IconButton.Position = UDim2.new(iconStartPos.X.Scale, iconStartPos.X.Offset + delta.X, iconStartPos.Y.Scale, iconStartPos.Y.Offset + delta.Y)
     end
 end)
@@ -511,11 +549,11 @@ spawn(function()
 end)
 
 -- ====== SETTINGS: MOVESPEED ======
-local moveSpeedSlider = CreateSlider(
+CreateSlider(
     SettingsTab,
     "Move Speed",
     1,
-    40,  -- 16 × 2.5 = 40
+    40,
     16,
     "",
     function(value)
@@ -548,4 +586,4 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ v6.3 загружен! Красивый слайдер MoveSpeed работает.")
+print("✅ v6.4 загружен! Слайдер работает на телефоне (тач).")
