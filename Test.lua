@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 7.0 ФИНАЛЬНАЯ (Всё работает)
+    Версия: 7.1 (Исправлен запуск и слайдер)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -223,7 +223,7 @@ StopBtn.MouseButton1Click:Connect(function()
     stopEverything = stopEnabled
 end)
 
--- ====== SETTINGS: MOVESPEED ======
+-- ====== SETTINGS: MOVESPEED (без начального расчёта) ======
 local SpeedGroup = Instance.new("Frame")
 SpeedGroup.Size = UDim2.new(1, -16, 0, 60)
 SpeedGroup.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -251,22 +251,23 @@ SpeedBar.Parent = SpeedGroup
 Instance.new("UICorner", SpeedBar).CornerRadius = UDim.new(0, 7)
 
 local SpeedFill = Instance.new("Frame")
-SpeedFill.Size = UDim2.new(0, 0, 1, 0)
+SpeedFill.Size = UDim2.new((16-1)/(40-1), 0, 1, 0)  -- изначально 16
 SpeedFill.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
 SpeedFill.Parent = SpeedBar
 Instance.new("UICorner", SpeedFill).CornerRadius = UDim.new(0, 7)
 
 local SpeedKnob = Instance.new("Frame")
 SpeedKnob.Size = UDim2.new(0, 22, 0, 22)
-SpeedKnob.Position = UDim2.new(0, -11, 0.5, -11)
+SpeedKnob.Position = UDim2.new((16-1)/(40-1), -11, 0.5, -11)
 SpeedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 SpeedKnob.Parent = SpeedBar
 Instance.new("UICorner", SpeedKnob).CornerRadius = UDim.new(1, 0)
 
 local function updateSpeed(screenX)
     local barStart = SpeedBar.AbsolutePosition.X
-    local barEnd = barStart + SpeedBar.AbsoluteSize.X
-    local rel = math.clamp((screenX - barStart) / (barEnd - barStart), 0, 1)
+    local barSize = SpeedBar.AbsoluteSize.X
+    if barSize <= 0 then return end
+    local rel = math.clamp((screenX - barStart) / barSize, 0, 1)
     local val = math.floor(1 + 39 * rel + 0.5)
     currentWalkSpeed = val
     SpeedFill.Size = UDim2.new(rel, 0, 1, 0)
@@ -279,9 +280,6 @@ local function updateSpeed(screenX)
         end
     end
 end
-
--- Инициализация позиции
-updateSpeed(SpeedBar.AbsolutePosition.X + (16 - 1) / 39 * SpeedBar.AbsoluteSize.X)
 
 SpeedBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -370,12 +368,13 @@ UserInputService.InputEnded:Connect(function()
     draggingIcon = false
 end)
 
--- Открытие/закрытие
+-- ====== ОТКРЫТИЕ / ЗАКРЫТИЕ ======
 IconButton.MouseButton1Click:Connect(function()
     if draggingIcon then return end
     MainFrame.Visible = true
     IconButton.Visible = false
 end)
+
 CloseButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
     IconButton.Visible = true
@@ -396,10 +395,13 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
         task.wait(0.2)
-        if not stopEverything then hum.WalkSpeed = currentWalkSpeed end
+        if not stopEverything then
+            hum.WalkSpeed = currentWalkSpeed
+        end
     end
 end)
 
 IconButton.Visible = true
 MainFrame.Visible = false
-print("✅ Готово. Слайдер и Home работают.")
+
+print("✅ v7.1 готов! Должно работать идеально.")
