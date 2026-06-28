@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 4.2 (Фикс Session Honey, стрелка больше)
+    Версия: 4.3 (Стрелка ещё больше, Session Honey из GUI)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -13,61 +13,71 @@ local UserInputService = game:GetService("UserInputService")
 local TWEEN_SPEED = 0.15
 local tweenInfo = TweenInfo.new(TWEEN_SPEED, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
--- Глобальные переменные
 local startTime = tick()
 local initialHoney = nil
 local stopEverything = false
 
--- Функция поиска мёда по ВСЕМ возможным путям в Bee Swarm
-local function getHoneyValue()
+-- Получение мёда: сначала ищем в leaderstats, потом парсим GUI
+local function getHoneyFromScreen()
     local player = LocalPlayer
-    if not player then return 0 end
+    if not player then return nil end
 
-    -- leaderstats (основной путь)
+    -- 1. leaderstats (стандартно)
     local leaderstats = player:FindFirstChild("leaderstats")
     if leaderstats then
         for _, stat in ipairs(leaderstats:GetChildren()) do
-            if stat.Name == "Honey" or stat.Name == "HoneyAmount" or stat.Name == "Honey Total" then
+            if (stat.Name == "Honey" or stat.Name == "HoneyAmount" or stat.Name == "Honey Total") then
                 if stat:IsA("IntValue") or stat:IsA("DoubleValue") or stat:IsA("NumberValue") then
-                    return stat.Value
+                    return stat.Value, "leaderstats"
                 end
             end
         end
     end
 
-    -- Stats (альтернативный путь)
+    -- 2. Stats
     local stats = player:FindFirstChild("Stats")
     if stats then
         for _, stat in ipairs(stats:GetChildren()) do
-            if stat.Name == "Honey" or stat.Name == "HoneyAmount" then
+            if (stat.Name == "Honey" or stat.Name == "HoneyAmount") then
                 if stat:IsA("IntValue") or stat:IsA("DoubleValue") or stat:IsA("NumberValue") then
-                    return stat.Value
+                    return stat.Value, "Stats"
                 end
             end
         end
     end
 
-    -- PlayerGui (иногда значения кешируются там)
+    -- 3. Поиск в PlayerGui текстовых элементов, содержащих "Honey" или "Мёд"
     local playerGui = player:FindFirstChild("PlayerGui")
     if playerGui then
         for _, child in ipairs(playerGui:GetDescendants()) do
-            if child.Name == "Honey" and (child:IsA("IntValue") or child:IsA("DoubleValue") or child:IsA("NumberValue")) then
-                return child.Value
+            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                local text = child.Text:lower()
+                -- Ищем слова honey или мёд (русская раскладка)
+                if text:find("honey") or text:find("мёд") or text:find("мед") then
+                    -- Извлекаем число (может быть с запятыми)
+                    local numberText = text:match("([%d,]+)")
+                    if numberText then
+                        local cleaned = numberText:gsub(",", "")
+                        local value = tonumber(cleaned)
+                        if value then
+                            return value, "GUI: " .. child:GetFullName()
+                        end
+                    end
+                end
             end
         end
     end
 
-    return 0
+    return nil
 end
 
--- Ожидание начального значения (с учётом, что может быть 0 на старте)
+-- Ожидание начального значения
 spawn(function()
     while initialHoney == nil do
-        local val = getHoneyValue()
-        -- Ждём, пока появится персонаж и leaderstats загрузится
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        local val, source = getHoneyFromScreen()
+        if val and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
             initialHoney = val
-            print("✅ Initial Honey set to:", initialHoney)
+            print("✅ Initial Honey set from " .. source .. ": " .. val)
         else
             task.wait(2)
         end
@@ -82,13 +92,13 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, mins, secs)
 end
 
--- Создание GUI
+-- GUI (без изменений до вкладок)
+
 local ClickGui = Instance.new("ScreenGui")
 ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
 ClickGui.Parent = CoreGui
 
--- Иконка-квадратик (открывашка)
 local IconButton = Instance.new("TextButton")
 IconButton.Name = "IconButton"
 IconButton.Size = UDim2.new(0, 45, 0, 45)
@@ -111,7 +121,6 @@ local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
 
--- Основное меню (высота 290)
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 500, 0, 290)
@@ -126,7 +135,6 @@ local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 6)
 MainCorner.Parent = MainFrame
 
--- Верхняя панель (перетаскивание)
 local TopBar = Instance.new("Frame")
 TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, 0, 0, 35)
@@ -165,7 +173,6 @@ TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TopBar
 
--- Кнопка закрытия (крестик)
 local CloseButton = Instance.new("TextButton")
 CloseButton.Size = UDim2.new(0, 28, 0, 28)
 CloseButton.Position = UDim2.new(1, -34, 0.5, -14)
@@ -240,7 +247,6 @@ UIListLayout.Parent = ContentContainer
 local Tabs = {}
 local SelectedTab = nil
 
--- Функция создания таба
 function CreateTab(name, icon)
     local TabButton = Instance.new("TextButton")
     TabButton.Name = name
@@ -298,7 +304,6 @@ function CreateTab(name, icon)
     return tabData
 end
 
--- Выбор таба
 function SelectTab(tabData)
     if SelectedTab == tabData then return end
 
@@ -332,13 +337,12 @@ function UpdateCanvasSize()
     end
 end
 
--- Пустые функции создания элементов (чтобы не было ошибок)
 function CreateSection(tabData, title) end
 function CreateToggle(tabData, section, name, default, callback) end
 function CreateSlider(tabData, section, name, min, max, default, suffix, callback) end
 function CreateButton(tabData, section, name, callback) end
 
--- Перетаскивание меню (только за верхнюю панель)
+-- Перетаскивание меню
 local menuDragging = false
 local menuDragStart, menuStartPos
 
@@ -413,7 +417,7 @@ IconButton.InputEnded:Connect(function(input)
     end
 end)
 
--- Создание вкладок
+-- Вкладки
 local HomeTab = CreateTab("Home", "⌂")
 local FarmingTab = CreateTab("Farming", "✿")
 local CombatTab = CreateTab("Combat", "⚔")
@@ -422,27 +426,25 @@ local PlantersTab = CreateTab("Planters", "🌱")
 local ToysTab = CreateTab("Toys", "🧸")
 local SettingsTab = CreateTab("Settings", "⚙")
 
--- Увеличиваем иконку Home
 HomeTab.Button.TextSize = 14
 
--- ====== ВКЛАДКА HOME (СВОРАЧИВАЕМАЯ) ======
+-- ====== ВКЛАДКА HOME ======
 local HomePage = HomeTab.Page
 
--- Обёртка секции
 local HomeSectionFrame = Instance.new("Frame")
-HomeSectionFrame.Size = UDim2.new(1, -10, 0, 95)  -- временная высота
+HomeSectionFrame.Size = UDim2.new(1, -10, 0, 95)
 HomeSectionFrame.BackgroundTransparency = 1
 HomeSectionFrame.LayoutOrder = 1
 HomeSectionFrame.Parent = HomePage
 
--- Кнопка раскрытия с БОЛЬШОЙ белой стрелкой (TextSize 16)
+-- Стрелка ещё больше (TextSize 18)
 local HomeToggleBtn = Instance.new("TextButton")
 HomeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
 HomeToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 HomeToggleBtn.BorderSizePixel = 0
 HomeToggleBtn.Text = "  ▼  Home"
 HomeToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-HomeToggleBtn.TextSize = 16  -- увеличено
+HomeToggleBtn.TextSize = 18  -- увеличено до 18
 HomeToggleBtn.Font = Enum.Font.GothamBold
 HomeToggleBtn.TextXAlignment = Enum.TextXAlignment.Left
 HomeToggleBtn.AutoButtonColor = false
@@ -452,7 +454,6 @@ local ToggleBtnCorner = Instance.new("UICorner")
 ToggleBtnCorner.CornerRadius = UDim.new(0, 6)
 ToggleBtnCorner.Parent = HomeToggleBtn
 
--- Контейнер для содержимого
 local HomeContent = Instance.new("Frame")
 HomeContent.Size = UDim2.new(1, 0, 0, 80)
 HomeContent.Position = UDim2.new(0, 0, 0, 32)
@@ -542,7 +543,6 @@ StopCircleCorner.Parent = StopCircle
 -- Состояние раскрытия
 local homeSectionOpen = true
 
--- Функция обновления размера секции
 local function updateHomeSectionSize()
     if homeSectionOpen then
         HomeContent.Visible = true
@@ -573,14 +573,13 @@ end
 
 updateHomeSectionSize()
 
--- Клик по кнопке раскрытия
 HomeToggleBtn.MouseButton1Click:Connect(function()
     homeSectionOpen = not homeSectionOpen
     HomeToggleBtn.Text = homeSectionOpen and "  ▼  Home" or "  ▶  Home"
     updateHomeSectionSize()
 end)
 
--- Stop Everything переключение
+-- Stop Everything
 local stopEverythingEnabled = false
 StopButton.MouseButton1Click:Connect(function()
     stopEverythingEnabled = not stopEverythingEnabled
@@ -594,33 +593,34 @@ StopButton.MouseButton1Click:Connect(function()
     stopEverything = stopEverythingEnabled
 end)
 
--- Обновление Uptime и Session Honey (чаще и точнее)
+-- Обновление данных
 spawn(function()
     while true do
-        task.wait(0.5)  -- обновляем 2 раза в секунду для быстрой реакции
+        task.wait(0.5)
         local elapsed = tick() - startTime
         UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
 
         if initialHoney ~= nil then
-            local currentHoney = getHoneyValue()
-            local sessionHoney = math.max(0, currentHoney - initialHoney)
-            HoneyLabel.Text = "Session Honey: " .. sessionHoney
+            local currentHoney, source = getHoneyFromScreen()
+            if currentHoney then
+                local sessionHoney = math.max(0, currentHoney - initialHoney)
+                HoneyLabel.Text = "Session Honey: " .. sessionHoney
+            else
+                HoneyLabel.Text = "Session Honey: ?"
+            end
         else
             HoneyLabel.Text = "Session Honey: waiting..."
         end
     end
 end)
 
--- Регистрируем HomeSectionFrame в элементах таба
 table.insert(HomeTab.Elements, HomeSectionFrame)
-
--- Выбираем Home по умолчанию
 SelectTab(HomeTab)
 
 -- Финальные настройки
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm Click GUI v4.2 загружен!")
-print("🐝 Стрелка Home увеличена (TextSize 16)")
-print("🐝 Session Honey ищет Honey/HoneyAmount везде")
+print("✅ Bee Swarm Click GUI v4.3 загружен!")
+print("🐝 Стрелка Home: TextSize 18")
+print("🐝 Session Honey теперь ищет в GUI, включая русский текст")
