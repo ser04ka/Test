@@ -2,7 +2,7 @@
     Bee Swarm Simulator - Visual Click GUI
     Стиль: Тёмный с золотым акцентом
     Экзекьютер: Delta
-    Версия: 3.2 (Иконка Home крупнее)
+    Версия: 3.3 (Меньше по высоте + иконка Home крупнее)
 ]]
 
 -- Сервисы
@@ -47,11 +47,11 @@ local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
 
--- ====== ОСНОВНОЕ МЕНЮ ======
+-- ====== ОСНОВНОЕ МЕНЮ (уменьшена высота до 350) ======
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 500, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -250, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 500, 0, 350)  -- было 400
+MainFrame.Position = UDim2.new(0.5, -250, 0.5, -175)  -- центровка под новую высоту
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = false
@@ -62,7 +62,7 @@ local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 6)
 MainCorner.Parent = MainFrame
 
--- Верхняя панель
+-- Верхняя панель (перетаскивается только за неё)
 local TopBar = Instance.new("Frame")
 TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, 0, 0, 35)
@@ -182,12 +182,12 @@ UIListLayout.Parent = ContentContainer
 local Tabs = {}
 local SelectedTab = nil
 
--- Функция создания таба
+-- Функция создания таба (уменьшен отступ между табами)
 function CreateTab(name, icon)
     local TabButton = Instance.new("TextButton")
     TabButton.Name = name
     TabButton.Size = UDim2.new(1, -20, 0, 32)
-    TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 38) + 10)
+    TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 35) + 10)  -- было 38, стало 35 для компактности
     TabButton.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
     TabButton.BorderSizePixel = 0
     TabButton.TextColor3 = Color3.fromRGB(180, 180, 190)
@@ -274,7 +274,7 @@ function UpdateCanvasSize()
     end
 end
 
--- ====== DRAG ДЛЯ МЕНЮ ======
+-- ====== DRAG ДЛЯ МЕНЮ (только за верхнюю панель) ======
 local menuDragging = false
 local menuDragInput, menuDragStart, menuStartPos
 
@@ -358,7 +358,7 @@ local PlantersTab = CreateTab("Planters", "🌱")
 local ToysTab = CreateTab("Toys", "🧸")
 local SettingsTab = CreateTab("Settings", "⚙")
 
--- Делаем иконку Home чуть больше
+-- Иконка Home чуть крупнее
 HomeTab.Button.TextSize = 14
 
 -- Выбираем вкладку Home по умолчанию
@@ -368,5 +368,6 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm Click GUI v3.2 загружен!")
-print("🐝 Иконка Home увеличена (TextSize 14)")
+print("✅ Bee Swarm Click GUI v3.3 загружен!")
+print("🐝 Высота меню уменьшена до 350, табы компактнее.")
+print("   Драг только за верхнюю панель.")
