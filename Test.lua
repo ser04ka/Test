@@ -1,6 +1,8 @@
 --[[
-    Bee Swarm Simulator - Красивый GUI (100% телефон)
-    Версия 11.1 – фикс мобильных касаний (Activated вместо MouseButton1Click)
+    Bee Swarm Simulator - Красивый GUI v12.0
+    • Панель вкладок слева с иконками
+    • Единый стиль: неактивные — тёмные, активная — золотая
+    • Работает на телефоне (Delta) через Activated
 ]]
 
 local CoreGui = game:GetService("CoreGui")
@@ -24,7 +26,6 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "BeeSwarmGUI"
 gui.Parent = CoreGui
 
--- Формат времени
 function formatTime(sec)
     local h = math.floor(sec/3600)
     local m = math.floor((sec%3600)/60)
@@ -32,7 +33,7 @@ function formatTime(sec)
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- ====== ИКОНКА (статичная) ======
+-- ====== ИКОНКА (пчёлка) ======
 local icon = Instance.new("TextButton")
 icon.Size = UDim2.new(0, 45, 0, 45)
 icon.Position = UDim2.new(0.5, -22, 0.1, 0)
@@ -49,8 +50,8 @@ Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 14)
 
 -- ====== ГЛАВНОЕ ОКНО ======
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 500, 0, 290)
-main.Position = UDim2.new(0.5, -250, 0.5, -145)
+main.Size = UDim2.new(0, 500, 0, 310)
+main.Position = UDim2.new(0.5, -250, 0.5, -155)
 main.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 main.Visible = false
 main.Parent = gui
@@ -70,11 +71,11 @@ goldLine.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
 goldLine.Parent = topBar
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(0, 200, 0, 25)
-title.Position = UDim2.new(0, 42, 0.5, -12)
+title.Size = UDim2.new(0, 300, 0, 25)
+title.Position = UDim2.new(0, 50, 0.5, -12)
 title.BackgroundTransparency = 1
 title.TextColor3 = Color3.fromRGB(255, 200, 60)
-title.Text = "🐝 Bee Swarm Visuals"
+title.Text = "🐝 Bee Swarm GUI"
 title.TextSize = 16
 title.Font = Enum.Font.GothamBold
 title.Parent = topBar
@@ -103,16 +104,17 @@ l2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 l2.Rotation = -45
 l2.Parent = closeBtn
 
--- ====== БОКОВАЯ ПАНЕЛЬ ======
+-- ====== БОКОВАЯ ПАНЕЛЬ (СЛЕВА) ======
 local tabPanel = Instance.new("Frame")
-tabPanel.Size = UDim2.new(0, 140, 1, -35)
+tabPanel.Size = UDim2.new(0, 150, 1, -35)      -- ширина 150
 tabPanel.Position = UDim2.new(0, 0, 0, 35)
 tabPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 tabPanel.Parent = main
 
 local tabList = Instance.new("UIListLayout")
-tabList.Padding = UDim.new(0, 4)
+tabList.Padding = UDim.new(0, 6)
 tabList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tabList.SortOrder = Enum.SortOrder.LayoutOrder
 tabList.Parent = tabPanel
 
 local div = Instance.new("Frame")
@@ -121,10 +123,10 @@ div.Position = UDim2.new(1, 0, 0, 0)
 div.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
 div.Parent = tabPanel
 
--- ====== КОНТЕНТ ======
+-- ====== КОНТЕНТ (СПРАВА ОТ ПАНЕЛИ) ======
 local content = Instance.new("Frame")
-content.Size = UDim2.new(1, -140, 1, -35)
-content.Position = UDim2.new(0, 140, 0, 35)
+content.Size = UDim2.new(1, -150, 1, -35)
+content.Position = UDim2.new(0, 150, 0, 35)
 content.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 content.Parent = main
 
@@ -135,20 +137,25 @@ contentList.Parent = content
 
 -- ====== ЛОГИКА ВКЛАДОК ======
 local tabs = {}
-local currentTab = nil
+local activeTabButton = nil
+
+local ACTIVE_BG = Color3.fromRGB(255, 200, 60)   -- золотой
+local ACTIVE_TEXT = Color3.fromRGB(20, 20, 22)     -- тёмный текст
+local INACTIVE_BG = Color3.fromRGB(25, 25, 28)
+local INACTIVE_TEXT = Color3.fromRGB(200, 200, 210)
 
 function createTab(name, iconChar)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -20, 0, 32)
-    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-    btn.TextColor3 = Color3.fromRGB(180, 180, 190)
-    btn.Text = "  " .. iconChar .. "  " .. name
-    btn.TextSize = 13
+    btn.Size = UDim2.new(1, -16, 0, 34)
+    btn.BackgroundColor3 = INACTIVE_BG
+    btn.TextColor3 = INACTIVE_TEXT
+    btn.Text = "  " .. iconChar .. "   " .. name
+    btn.TextSize = 14
     btn.Font = Enum.Font.GothamSemibold
     btn.TextXAlignment = Enum.TextXAlignment.Left
     btn.AutoButtonColor = false
     btn.Parent = tabPanel
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
     local page = Instance.new("Frame")
     page.BackgroundTransparency = 1
@@ -158,18 +165,34 @@ function createTab(name, iconChar)
     page.UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
     local data = { button = btn, page = page }
-    btn.Activated:Connect(function()  -- ИСПРАВЛЕНО: Activated вместо MouseButton1Click
-        if currentTab then currentTab.page.Visible = false end
+
+    btn.Activated:Connect(function()
+        if activeTabButton then
+            -- сброс предыдущей активной
+            activeTabButton.BackgroundColor3 = INACTIVE_BG
+            activeTabButton.TextColor3 = INACTIVE_TEXT
+        end
+        -- скрываем все страницы
+        for _, t in ipairs(tabs) do
+            t.page.Visible = false
+        end
         page.Visible = true
-        currentTab = data
+        btn.BackgroundColor3 = ACTIVE_BG
+        btn.TextColor3 = ACTIVE_TEXT
+        activeTabButton = btn
     end)
+
     table.insert(tabs, data)
     return data
 end
 
-local homeTab = createTab("Home", "⌂")
-local settingsTab = createTab("Settings", "⚙")
-homeTab.button.TextSize = 14
+-- Создаём 6 вкладок с нужными иконками
+local homeTab     = createTab("Home",     "⌂")   -- домик
+local farmingTab  = createTab("Farming",  "❀")   -- цветок
+local combatTab   = createTab("Combat",   "⚔")   -- мечи
+local plantersTab = createTab("Planters", "🌱")   -- росток (эмодзи, но в стиле)
+local toysTab     = createTab("Toys",     "🧸")   -- мишка
+local settingsTab = createTab("Settings", "⚙")   -- шестерёнка
 
 -- ====== HOME ======
 local homeGroup = Instance.new("Frame")
@@ -242,7 +265,7 @@ stopDot.Parent = stopBtn
 Instance.new("UICorner", stopDot).CornerRadius = UDim.new(1, 0)
 
 local homeOpen = true
-homeToggle.Activated:Connect(function()  -- ИСПРАВЛЕНО
+homeToggle.Activated:Connect(function()
     homeOpen = not homeOpen
     homeToggle.Text = homeOpen and "  ▼  Home" or "  ▶  Home"
     homeContent.Visible = homeOpen
@@ -250,7 +273,7 @@ homeToggle.Activated:Connect(function()  -- ИСПРАВЛЕНО
 end)
 
 local stopEnabled = false
-stopBtn.Activated:Connect(function()  -- ИСПРАВЛЕНО
+stopBtn.Activated:Connect(function()
     stopEnabled = not stopEnabled
     if stopEnabled then
         TweenService:Create(stopBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 80, 80)}):Play()
@@ -302,7 +325,20 @@ speedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 speedKnob.Parent = speedBar
 Instance.new("UICorner", speedKnob).CornerRadius = UDim.new(1, 0)
 
--- Логика слайдера через глобальный TouchMoved (уже с поддержкой тача)
+-- ====== ПУСТЫЕ СТРАНИЦЫ ДЛЯ ОСТАЛЬНЫХ ВКЛАДОК ======
+for _, tab in ipairs({farmingTab, combatTab, plantersTab, toysTab}) do
+    local stub = Instance.new("TextLabel")
+    stub.Size = UDim2.new(1, -16, 0, 40)
+    stub.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+    stub.TextColor3 = Color3.fromRGB(200, 200, 200)
+    stub.Text = "🚧 Coming Soon"
+    stub.TextSize = 16
+    stub.Font = Enum.Font.GothamMedium
+    stub.Parent = tab.page
+    Instance.new("UICorner", stub).CornerRadius = UDim.new(0, 6)
+end
+
+-- ====== ЛОГИКА СЛАЙДЕРА ======
 local sliderActive = false
 local function setSpeedFromX(x)
     local barX = speedBar.AbsolutePosition.X
@@ -341,7 +377,7 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- ====== ПЕРЕТАСКИВАНИЕ ОКНА ЗА ВЕРХНЮЮ ПАНЕЛЬ (уже с Touch) ======
+-- ====== ПЕРЕТАСКИВАНИЕ ОКНА ======
 local windowActive = false
 local winStartPos, winStartFrame
 
@@ -367,7 +403,7 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- ====== ОТКРЫТИЕ / ЗАКРЫТИЕ (ИСПРАВЛЕНО на Activated) ======
+-- ====== ОТКРЫТИЕ / ЗАКРЫТИЕ ======
 icon.Activated:Connect(function()
     main.Visible = true
     icon.Visible = false
@@ -378,10 +414,14 @@ closeBtn.Activated:Connect(function()
     icon.Visible = true
 end)
 
--- ====== ЗАПУСК ======
-currentTab = homeTab
+-- ====== ИНИЦИАЛИЗАЦИЯ ======
+-- Делаем Home активной по умолчанию
+homeTab.button.BackgroundColor3 = ACTIVE_BG
+homeTab.button.TextColor3 = ACTIVE_TEXT
 homeTab.page.Visible = true
+activeTabButton = homeTab.button
 
+-- Обновление uptime
 spawn(function()
     while true do
         wait(0.5)
@@ -389,6 +429,7 @@ spawn(function()
     end
 end)
 
+-- Автовосстановление скорости при респавне
 LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
@@ -399,4 +440,4 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
-print("✅ v11.1 – фикс мобильных касаний. Нажми на иконку, GUI откроется.")
+print("✅ v12.0 – левая панель с иконками, всё работает на телефоне.")
