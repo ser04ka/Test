@@ -1,6 +1,6 @@
 --[[
-    Bee Swarm Simulator - Красивый GUI
-    Версия 10.0 (100% работает)
+    Bee Swarm Simulator - Красивый GUI (100% телефон)
+    Версия 11.0 – только MouseClick и глобальный Touch
 ]]
 
 local CoreGui = game:GetService("CoreGui")
@@ -13,7 +13,7 @@ local startTime = tick()
 local currentSpeed = 16
 local stopEverything = false
 
--- Удаляем старый интерфейс, если был
+-- Удаляем старый GUI
 pcall(function()
     if CoreGui:FindFirstChild("BeeSwarmGUI") then
         CoreGui.BeeSwarmGUI:Destroy()
@@ -32,10 +32,10 @@ function formatTime(sec)
     return string.format("%02d:%02d:%02d", h, m, s)
 end
 
--- ====== ИКОНКА ======
+-- ====== ИКОНКА (статичная) ======
 local icon = Instance.new("TextButton")
 icon.Size = UDim2.new(0, 45, 0, 45)
-icon.Position = UDim2.new(0.5, -22, 0.1, 0)  -- чуть выше центра
+icon.Position = UDim2.new(0.5, -22, 0.1, 0)
 icon.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 icon.TextColor3 = Color3.fromRGB(255, 200, 60)
 icon.Text = "🐝"
@@ -56,21 +56,19 @@ main.Visible = false
 main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 6)
 
--- Верхняя панель (заголовок и драг)
+-- Верхняя панель
 local topBar = Instance.new("Frame")
 topBar.Size = UDim2.new(1, 0, 0, 35)
 topBar.BackgroundColor3 = Color3.fromRGB(40, 35, 20)
 topBar.Parent = main
 Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 6)
 
--- Золотая линия под заголовком
 local goldLine = Instance.new("Frame")
 goldLine.Size = UDim2.new(1, 0, 0, 2)
 goldLine.Position = UDim2.new(0, 0, 1, 0)
 goldLine.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
 goldLine.Parent = topBar
 
--- Текст заголовка
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(0, 200, 0, 25)
 title.Position = UDim2.new(0, 42, 0.5, -12)
@@ -79,10 +77,9 @@ title.TextColor3 = Color3.fromRGB(255, 200, 60)
 title.Text = "🐝 Bee Swarm Visuals"
 title.TextSize = 16
 title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = topBar
 
--- Кнопка закрытия (крестик)
+-- Крестик
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 28, 0, 28)
 closeBtn.Position = UDim2.new(1, -34, 0.5, -14)
@@ -106,7 +103,7 @@ l2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
 l2.Rotation = -45
 l2.Parent = closeBtn
 
--- ====== БОКОВАЯ ПАНЕЛЬ ВКЛАДОК ======
+-- ====== БОКОВАЯ ПАНЕЛЬ ======
 local tabPanel = Instance.new("Frame")
 tabPanel.Size = UDim2.new(0, 140, 1, -35)
 tabPanel.Position = UDim2.new(0, 0, 0, 35)
@@ -118,7 +115,6 @@ tabList.Padding = UDim.new(0, 4)
 tabList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 tabList.Parent = tabPanel
 
--- Разделитель
 local div = Instance.new("Frame")
 div.Size = UDim2.new(0, 1, 1, 0)
 div.Position = UDim2.new(1, 0, 0, 0)
@@ -204,7 +200,6 @@ hList.Padding = UDim.new(0, 6)
 hList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 hList.Parent = homeContent
 
--- Uptime
 local uptimeLabel = Instance.new("TextLabel")
 uptimeLabel.Size = UDim2.new(1, 0, 0, 20)
 uptimeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -215,7 +210,6 @@ uptimeLabel.Font = Enum.Font.Gotham
 uptimeLabel.Parent = homeContent
 Instance.new("UICorner", uptimeLabel).CornerRadius = UDim.new(0, 4)
 
--- Stop Everything
 local stopFrame = Instance.new("Frame")
 stopFrame.Size = UDim2.new(1, 0, 0, 24)
 stopFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -247,7 +241,6 @@ stopDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 stopDot.Parent = stopBtn
 Instance.new("UICorner", stopDot).CornerRadius = UDim.new(1, 0)
 
--- Раскрытие/скрытие Home
 local homeOpen = true
 homeToggle.MouseButton1Click:Connect(function()
     homeOpen = not homeOpen
@@ -256,7 +249,6 @@ homeToggle.MouseButton1Click:Connect(function()
     homeGroup.Size = homeOpen and UDim2.new(1, -16, 0, 28+56) or UDim2.new(1, -16, 0, 28)
 end)
 
--- Stop Everything
 local stopEnabled = false
 stopBtn.MouseButton1Click:Connect(function()
     stopEnabled = not stopEnabled
@@ -310,9 +302,9 @@ speedKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 speedKnob.Parent = speedBar
 Instance.new("UICorner", speedKnob).CornerRadius = UDim.new(1, 0)
 
--- Логика слайдера (работает мышью и пальцем)
-local sliderDrag = false
-local function setSpeed(x)
+-- Логика слайдера через глобальный TouchMoved
+local sliderActive = false
+local function setSpeedFromX(x)
     local barX = speedBar.AbsolutePosition.X
     local barW = speedBar.AbsoluteSize.X
     if barW <= 0 then return end
@@ -330,94 +322,60 @@ local function setSpeed(x)
     end
 end
 
+-- Запуск слайдера при касании на speedBar
 speedBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        sliderDrag = true
-        setSpeed(input.Position.X)
+        sliderActive = true
+        setSpeedFromX(input.Position.X)
     end
 end)
 
-speedBar.InputEnded:Connect(function(input)
+-- Глобальное отслеживание перемещения касания
+UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
+    if sliderActive then
+        setSpeedFromX(touch.Position.X)
+    end
+end)
+
+-- Остановка слайдера при отпускании
+UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        sliderDrag = false
+        sliderActive = false
     end
 end)
 
-speedBar.MouseMoved:Connect(function(x, y)
-    if sliderDrag then setSpeed(x) end
-end)
+-- ====== ПЕРЕТАСКИВАНИЕ ОКНА ЗА ВЕРХНЮЮ ПАНЕЛЬ ======
+local windowActive = false
+local winStartPos, winStartFrame
 
-speedBar.TouchMoved:Connect(function(touch, gameProcessed)
-    if sliderDrag then setSpeed(touch.Position.X) end
-end)
-
--- ====== ПЕРЕТАСКИВАНИЕ ОКНА ======
-local winDrag = false
-local winStart, frameStart
 topBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        winDrag = true
-        winStart = input.Position
-        frameStart = main.Position
-    end
-end)
-topBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        winDrag = false
-    end
-end)
-topBar.MouseMoved:Connect(function(x, y)
-    if winDrag then
-        local delta = Vector2.new(x, y) - winStart
-        main.Position = UDim2.new(frameStart.X.Scale, frameStart.X.Offset + delta.X,
-            frameStart.Y.Scale, frameStart.Y.Offset + delta.Y)
-    end
-end)
-topBar.TouchMoved:Connect(function(touch, gameProcessed)
-    if winDrag then
-        local delta = touch.Position - winStart
-        main.Position = UDim2.new(frameStart.X.Scale, frameStart.X.Offset + delta.X,
-            frameStart.Y.Scale, frameStart.Y.Offset + delta.Y)
+        windowActive = true
+        winStartPos = input.Position
+        winStartFrame = main.Position
     end
 end)
 
--- ====== ПЕРЕТАСКИВАНИЕ ИКОНКИ ======
-local iconDrag = false
-local iconStart, iconPosStart
-icon.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        iconDrag = true
-        iconStart = input.Position
-        iconPosStart = icon.Position
-    end
-end)
-icon.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        iconDrag = false
-    end
-end)
-icon.MouseMoved:Connect(function(x, y)
-    if iconDrag then
-        local delta = Vector2.new(x, y) - iconStart
-        icon.Position = UDim2.new(iconPosStart.X.Scale, iconPosStart.X.Offset + delta.X,
-            iconPosStart.Y.Scale, iconPosStart.Y.Offset + delta.Y)
-    end
-end)
-icon.TouchMoved:Connect(function(touch, gameProcessed)
-    if iconDrag then
-        local delta = touch.Position - iconStart
-        icon.Position = UDim2.new(iconPosStart.X.Scale, iconPosStart.X.Offset + delta.X,
-            iconPosStart.Y.Scale, iconPosStart.Y.Offset + delta.Y)
+UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
+    if windowActive then
+        local delta = touch.Position - winStartPos
+        main.Position = UDim2.new(winStartFrame.X.Scale, winStartFrame.X.Offset + delta.X,
+            winStartFrame.Y.Scale, winStartFrame.Y.Offset + delta.Y)
     end
 end)
 
--- ====== ОТКРЫТИЕ/ЗАКРЫТИЕ ======
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        windowActive = false
+    end
+end)
+
+-- ====== ОТКРЫТИЕ / ЗАКРЫТИЕ (ТОЛЬКО MouseButton1Click) ======
 icon.MouseButton1Click:Connect(function()
-    if not iconDrag then
-        main.Visible = true
-        icon.Visible = false
-    end
+    main.Visible = true
+    icon.Visible = false
 end)
+
 closeBtn.MouseButton1Click:Connect(function()
     main.Visible = false
     icon.Visible = true
@@ -427,7 +385,6 @@ end)
 currentTab = homeTab
 homeTab.page.Visible = true
 
--- Обновление Uptime
 spawn(function()
     while true do
         wait(0.5)
@@ -435,7 +392,6 @@ spawn(function()
     end
 end)
 
--- Восстановление скорости при респавне
 LocalPlayer.CharacterAdded:Connect(function(char)
     local hum = char:WaitForChild("Humanoid", 5)
     if hum then
@@ -446,4 +402,4 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     end
 end)
 
-print("✅ Bee Swarm GUI v10.0 готов!")
+print("✅ v11.0 – должно работать. Нажми на иконку.")
