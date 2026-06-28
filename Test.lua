@@ -1,32 +1,49 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
-    Стиль: Тёмный с золотым акцентом
     Экзекьютер: Delta
-    Версия: 3.4 (Компактная высота 290, табы плотнее)
+    Версия: 4.0 (Home с Uptime, Session Honey, Stop Everything)
 ]]
 
--- Сервисы
 local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 
--- Настройки анимации
 local TWEEN_SPEED = 0.15
 local tweenInfo = TweenInfo.new(TWEEN_SPEED, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
--- Создаём главный GUI
+-- Глобальные переменные
+local startTime = tick()
+local initialHoney = 0
+local stopEverything = false  -- флаг для Stop Everything
+
+-- Попытка получить начальный мёд
+pcall(function()
+    if LocalPlayer.leaderstats and LocalPlayer.leaderstats:FindFirstChild("Honey") then
+        initialHoney = LocalPlayer.leaderstats.Honey.Value
+    end
+end)
+
+-- Форматирование времени
+local function formatTime(seconds)
+    local hours = math.floor(seconds / 3600)
+    local mins = math.floor((seconds % 3600) / 60)
+    local secs = math.floor(seconds % 60)
+    return string.format("%02d:%02d:%02d", hours, mins, secs)
+end
+
+-- GUI
 local ClickGui = Instance.new("ScreenGui")
 ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
 ClickGui.Parent = CoreGui
 
--- ====== ИКОНКА-КВАДРАТИК (открывашка) ======
+-- Иконка-квадратик (открывашка)
 local IconButton = Instance.new("TextButton")
 IconButton.Name = "IconButton"
 IconButton.Size = UDim2.new(0, 45, 0, 45)
-IconButton.Position = UDim2.new(0.5, -22, 0, 30)  -- центр сверху
+IconButton.Position = UDim2.new(0.5, -22, 0, 30)
 IconButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 IconButton.BorderSizePixel = 0
 IconButton.TextColor3 = Color3.fromRGB(255, 200, 60)
@@ -36,22 +53,20 @@ IconButton.Font = Enum.Font.GothamBold
 IconButton.AutoButtonColor = false
 IconButton.Parent = ClickGui
 
--- Золотая рамка
 local IconStroke = Instance.new("UIStroke")
 IconStroke.Color = Color3.fromRGB(255, 180, 30)
 IconStroke.Thickness = 2
 IconStroke.Parent = IconButton
 
--- Закругление углов
 local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
 
--- ====== ОСНОВНОЕ МЕНЮ (высота 290, идеально под табы) ======
+-- Основное меню (высота 290)
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 500, 0, 290)  -- уменьшено с 350
-MainFrame.Position = UDim2.new(0.5, -250, 0.5, -145)  -- центровка
+MainFrame.Size = UDim2.new(0, 500, 0, 290)
+MainFrame.Position = UDim2.new(0.5, -250, 0.5, -145)
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = false
@@ -62,7 +77,7 @@ local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 6)
 MainCorner.Parent = MainFrame
 
--- Верхняя панель (жёлтая, за неё тянем)
+-- Верхняя панель (перетаскивание)
 local TopBar = Instance.new("Frame")
 TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, 0, 0, 35)
@@ -74,7 +89,6 @@ local TopCorner = Instance.new("UICorner")
 TopCorner.CornerRadius = UDim.new(0, 6)
 TopCorner.Parent = TopBar
 
--- Золотая линия
 local GoldLine = Instance.new("Frame")
 GoldLine.Size = UDim2.new(1, 0, 0, 2)
 GoldLine.Position = UDim2.new(0, 0, 1, 0)
@@ -82,7 +96,6 @@ GoldLine.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
 GoldLine.BorderSizePixel = 0
 GoldLine.Parent = TopBar
 
--- Иконка в заголовке
 local TitleIcon = Instance.new("TextLabel")
 TitleIcon.Size = UDim2.new(0, 25, 0, 25)
 TitleIcon.Position = UDim2.new(0, 8, 0.5, -12)
@@ -92,7 +105,6 @@ TitleIcon.TextSize = 18
 TitleIcon.Font = Enum.Font.GothamBold
 TitleIcon.Parent = TopBar
 
--- Заголовок
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(0, 180, 0, 25)
 TitleLabel.Position = UDim2.new(0, 38, 0.5, -12)
@@ -104,7 +116,7 @@ TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TopBar
 
--- Кнопка закрытия (кастомный крестик)
+-- Кнопка закрытия (крестик)
 local CloseButton = Instance.new("TextButton")
 CloseButton.Size = UDim2.new(0, 28, 0, 28)
 CloseButton.Position = UDim2.new(1, -34, 0.5, -14)
@@ -118,7 +130,6 @@ local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 6)
 CloseCorner.Parent = CloseButton
 
--- Линия 1 крестика
 local Line1 = Instance.new("Frame")
 Line1.Size = UDim2.new(0, 2, 0, 16)
 Line1.Position = UDim2.new(0.5, -1, 0.5, -8)
@@ -127,7 +138,6 @@ Line1.BorderSizePixel = 0
 Line1.Rotation = 45
 Line1.Parent = CloseButton
 
--- Линия 2 крестика
 local Line2 = Instance.new("Frame")
 Line2.Size = UDim2.new(0, 2, 0, 16)
 Line2.Position = UDim2.new(0.5, -1, 0.5, -8)
@@ -161,7 +171,6 @@ ContentPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 ContentPanel.BorderSizePixel = 0
 ContentPanel.Parent = MainFrame
 
--- Контейнер для контента табов
 local ContentContainer = Instance.new("ScrollingFrame")
 ContentContainer.Size = UDim2.new(1, -20, 1, -20)
 ContentContainer.Position = UDim2.new(0, 10, 0, 10)
@@ -182,12 +191,12 @@ UIListLayout.Parent = ContentContainer
 local Tabs = {}
 local SelectedTab = nil
 
--- Функция создания таба (уменьшен отступ между табами до 33)
+-- Функция создания таба
 function CreateTab(name, icon)
     local TabButton = Instance.new("TextButton")
     TabButton.Name = name
     TabButton.Size = UDim2.new(1, -20, 0, 32)
-    TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 33) + 10)  -- 33 вместо 35
+    TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 33) + 10)
     TabButton.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
     TabButton.BorderSizePixel = 0
     TabButton.TextColor3 = Color3.fromRGB(180, 180, 190)
@@ -274,7 +283,13 @@ function UpdateCanvasSize()
     end
 end
 
--- ====== DRAG ДЛЯ МЕНЮ (только за верхнюю панель) ======
+-- Функции для создания элементов (пустые, чтобы не сломать, если что)
+function CreateSection(tabData, title) end
+function CreateToggle(tabData, section, name, default, callback) end
+function CreateSlider(tabData, section, name, min, max, default, suffix, callback) end
+function CreateButton(tabData, section, name, callback) end
+
+-- Перетаскивание меню (только за верхнюю панель)
 local menuDragging = false
 local menuDragStart, menuStartPos
 
@@ -302,7 +317,7 @@ TopBar.InputChanged:Connect(function(input)
     end
 end)
 
--- ====== DRAG ДЛЯ ИКОНКИ ======
+-- Перетаскивание иконки
 local iconDragging = false
 local iconDragStart, iconStartPos
 
@@ -330,7 +345,7 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ====== ОТКРЫТИЕ/ЗАКРЫТИЕ МЕНЮ ======
+-- Открытие/закрытие меню
 IconButton.MouseButton1Click:Connect(function()
     if iconDragging then return end
     MainFrame.Visible = true
@@ -349,7 +364,7 @@ IconButton.InputEnded:Connect(function(input)
     end
 end)
 
--- ====== СОЗДАНИЕ ВКЛАДОК ======
+-- Создание вкладок
 local HomeTab = CreateTab("Home", "⌂")
 local FarmingTab = CreateTab("Farming", "✿")
 local CombatTab = CreateTab("Combat", "⚔")
@@ -358,16 +373,188 @@ local PlantersTab = CreateTab("Planters", "🌱")
 local ToysTab = CreateTab("Toys", "🧸")
 local SettingsTab = CreateTab("Settings", "⚙")
 
--- Иконка Home чуть крупнее
+-- Увеличиваем иконку Home
 HomeTab.Button.TextSize = 14
 
--- Выбираем вкладку Home по умолчанию
+-- ====== ВКЛАДКА HOME (СВОРАЧИВАЕМАЯ) ======
+local HomePage = HomeTab.Page
+
+-- Обёртка секции
+local HomeSectionFrame = Instance.new("Frame")
+HomeSectionFrame.Size = UDim2.new(1, -10, 0, 95)  -- стартовая высота с раскрытым контентом
+HomeSectionFrame.BackgroundTransparency = 1
+HomeSectionFrame.LayoutOrder = 1
+HomeSectionFrame.Parent = HomePage
+
+-- Кнопка раскрытия с белой стрелкой
+local HomeToggleBtn = Instance.new("TextButton")
+HomeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
+HomeToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+HomeToggleBtn.BorderSizePixel = 0
+HomeToggleBtn.Text = "  ▼  Home"
+HomeToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+HomeToggleBtn.TextSize = 13
+HomeToggleBtn.Font = Enum.Font.GothamBold
+HomeToggleBtn.TextXAlignment = Enum.TextXAlignment.Left
+HomeToggleBtn.AutoButtonColor = false
+HomeToggleBtn.Parent = HomeSectionFrame
+
+local ToggleBtnCorner = Instance.new("UICorner")
+ToggleBtnCorner.CornerRadius = UDim.new(0, 6)
+ToggleBtnCorner.Parent = HomeToggleBtn
+
+-- Контейнер для содержимого
+local HomeContent = Instance.new("Frame")
+HomeContent.Size = UDim2.new(1, 0, 0, 65)
+HomeContent.Position = UDim2.new(0, 0, 0, 32)
+HomeContent.BackgroundTransparency = 1
+HomeContent.ClipsDescendants = true
+HomeContent.Parent = HomeSectionFrame
+
+local ContentList = Instance.new("UIListLayout")
+ContentList.Padding = UDim.new(0, 4)
+ContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ContentList.SortOrder = Enum.SortOrder.LayoutOrder
+ContentList.Parent = HomeContent
+
+-- Uptime Label
+local UptimeLabel = Instance.new("TextLabel")
+UptimeLabel.Size = UDim2.new(1, 0, 0, 20)
+UptimeLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+UptimeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+UptimeLabel.Text = "Uptime: 00:00:00"
+UptimeLabel.TextSize = 12
+UptimeLabel.Font = Enum.Font.Gotham
+UptimeLabel.Parent = HomeContent
+
+local UptimeCorner = Instance.new("UICorner")
+UptimeCorner.CornerRadius = UDim.new(0, 4)
+UptimeCorner.Parent = UptimeLabel
+
+-- Session Honey Label
+local HoneyLabel = Instance.new("TextLabel")
+HoneyLabel.Size = UDim2.new(1, 0, 0, 20)
+HoneyLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+HoneyLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+HoneyLabel.Text = "Session Honey: 0"
+HoneyLabel.TextSize = 12
+HoneyLabel.Font = Enum.Font.Gotham
+HoneyLabel.Parent = HomeContent
+
+local HoneyCorner = Instance.new("UICorner")
+HoneyCorner.CornerRadius = UDim.new(0, 4)
+HoneyCorner.Parent = HoneyLabel
+
+-- Stop Everything Toggle
+local StopFrame = Instance.new("Frame")
+StopFrame.Size = UDim2.new(1, 0, 0, 22)
+StopFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+StopFrame.BorderSizePixel = 0
+StopFrame.Parent = HomeContent
+
+local StopFrameCorner = Instance.new("UICorner")
+StopFrameCorner.CornerRadius = UDim.new(0, 4)
+StopFrameCorner.Parent = StopFrame
+
+local StopLabel = Instance.new("TextLabel")
+StopLabel.Size = UDim2.new(0, 140, 0, 22)
+StopLabel.BackgroundTransparency = 1
+StopLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+StopLabel.Text = "Stop Everything"
+StopLabel.TextSize = 12
+StopLabel.Font = Enum.Font.Gotham
+StopLabel.TextXAlignment = Enum.TextXAlignment.Left
+StopLabel.Parent = StopFrame
+
+local StopButton = Instance.new("TextButton")
+StopButton.Size = UDim2.new(0, 30, 0, 16)
+StopButton.Position = UDim2.new(1, -38, 0.5, -8)
+StopButton.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+StopButton.BorderSizePixel = 0
+StopButton.Text = ""
+StopButton.AutoButtonColor = false
+StopButton.Parent = StopFrame
+
+local StopBtnCorner = Instance.new("UICorner")
+StopBtnCorner.CornerRadius = UDim.new(1, 0)
+StopBtnCorner.Parent = StopButton
+
+local StopCircle = Instance.new("Frame")
+StopCircle.Size = UDim2.new(0, 10, 0, 10)
+StopCircle.Position = UDim2.new(0, 2, 0.5, -5)
+StopCircle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+StopCircle.BorderSizePixel = 0
+StopCircle.Parent = StopButton
+
+local StopCircleCorner = Instance.new("UICorner")
+StopCircleCorner.CornerRadius = UDim.new(1, 0)
+StopCircleCorner.Parent = StopCircle
+
+-- Состояние раскрытия
+local homeSectionOpen = true
+
+-- Функция обновления размера секции
+local function updateHomeSectionSize()
+    if homeSectionOpen then
+        HomeContent.Visible = true
+        HomeSectionFrame.Size = UDim2.new(1, -10, 0, 28 + 65)  -- заголовок + контент
+    else
+        HomeContent.Visible = false
+        HomeSectionFrame.Size = UDim2.new(1, -10, 0, 28)       -- только заголовок
+    end
+    UpdateCanvasSize()
+end
+
+-- Клик по кнопке раскрытия
+HomeToggleBtn.MouseButton1Click:Connect(function()
+    homeSectionOpen = not homeSectionOpen
+    HomeToggleBtn.Text = homeSectionOpen and "  ▼  Home" or "  ▶  Home"
+    updateHomeSectionSize()
+end)
+
+-- Stop Everything переключение
+local stopEverythingEnabled = false
+StopButton.MouseButton1Click:Connect(function()
+    stopEverythingEnabled = not stopEverythingEnabled
+    if stopEverythingEnabled then
+        TweenService:Create(StopButton, tweenInfo, {BackgroundColor3 = Color3.fromRGB(255, 80, 80)}):Play()
+        TweenService:Create(StopCircle, tweenInfo, {Position = UDim2.new(1, -12, 0.5, -5)}):Play()
+    else
+        TweenService:Create(StopButton, tweenInfo, {BackgroundColor3 = Color3.fromRGB(50, 50, 55)}):Play()
+        TweenService:Create(StopCircle, tweenInfo, {Position = UDim2.new(0, 2, 0.5, -5)}):Play()
+    end
+    stopEverything = stopEverythingEnabled  -- глобальный флаг для будущих функций
+end)
+
+-- Обновление Uptime и Session Honey
+spawn(function()
+    while true do
+        wait(1)
+        local elapsed = tick() - startTime
+        UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
+
+        -- Получение текущего мёда
+        local currentHoney = 0
+        pcall(function()
+            if LocalPlayer.leaderstats and LocalPlayer.leaderstats:FindFirstChild("Honey") then
+                currentHoney = LocalPlayer.leaderstats.Honey.Value
+            end
+        end)
+        local sessionHoney = math.max(0, currentHoney - initialHoney)
+        HoneyLabel.Text = "Session Honey: " .. sessionHoney
+    end
+end)
+
+-- Регистрируем HomeSectionFrame в элементах таба для правильного скролла
+table.insert(HomeTab.Elements, HomeSectionFrame)
+
+-- Выбираем Home по умолчанию
 SelectTab(HomeTab)
 
--- ====== ФИНАЛЬНЫЕ НАСТРОЙКИ ======
+-- Финальные настройки
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm Click GUI v3.4 загружен!")
-print("🐝 Высота меню: 290, табы плотнее, низ аккуратно у Settings.")
-print("   Перетаскивание: только за верхнюю жёлтую панель.")
+print("✅ Bee Swarm Click GUI v4.0 загружен!")
+print("🐝 Home: Uptime, Session Honey, Stop Everything")
+print("   Белая стрелка раскрывает/скрывает блок Home")
