@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 4.4 (Отладка + улучшенный поиск мёда)
+    Версия: 4.5 (Фикс initialHoney – мгновенный захват)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -16,18 +16,15 @@ local tweenInfo = TweenInfo.new(TWEEN_SPEED, Enum.EasingStyle.Quart, Enum.Easing
 local startTime = tick()
 local initialHoney = nil
 local stopEverything = false
-local debugText = ""  -- для отладки
+local debugText = ""
 
--- Функция поиска мёда с приоритетом leaderstats
+-- Поиск мёда (без привязки к персонажу)
 local function getHoneyFromGame()
     local player = LocalPlayer
     if not player then return nil, "no player" end
 
-    -- 1. leaderstats (ищем любые имена, связанные с мёдом)
-    local leaderstats = player:FindFirstChild("leaderstats")
-    if not leaderstats then
-        leaderstats = player:FindFirstChild("stats")  -- иногда строчные
-    end
+    -- 1. leaderstats / stats
+    local leaderstats = player:FindFirstChild("leaderstats") or player:FindFirstChild("stats")
     if leaderstats then
         for _, stat in ipairs(leaderstats:GetChildren()) do
             local name = stat.Name:lower()
@@ -39,14 +36,14 @@ local function getHoneyFromGame()
         end
     end
 
-    -- 2. Прямо в Player (иногда Honey лежит в LocalPlayer)
+    -- 2. Прямо в Player
     for _, child in ipairs(player:GetChildren()) do
         if child.Name == "Honey" and (child:IsA("IntValue") or child:IsA("NumberValue")) then
             return child.Value, "Player/" .. child.Name
         end
     end
 
-    -- 3. Поиск в GUI (экран)
+    -- 3. GUI (экран)
     local playerGui = player:FindFirstChild("PlayerGui")
     if playerGui then
         for _, element in ipairs(playerGui:GetDescendants()) do
@@ -69,19 +66,16 @@ local function getHoneyFromGame()
     return nil, "not found"
 end
 
--- Ожидание начального значения (улучшено)
+-- Быстрый захват начального значения (ждём первого успеха)
 spawn(function()
     while initialHoney == nil do
         local val, src = getHoneyFromGame()
-        -- Ждём, пока персонаж загрузится и значение станет доступным
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
-            if val then
-                initialHoney = val
-                debugText = "Initial: " .. tostring(initialHoney) .. " (" .. src .. ")"
-                print("✅ Initial Honey: " .. debugText)
-            end
+        if val then
+            initialHoney = val
+            debugText = "Initial: " .. tostring(initialHoney) .. " (" .. src .. ")"
+            print("✅ Initial Honey: " .. debugText)
         end
-        task.wait(1)
+        task.wait(0.3)  -- проверяем часто
     end
 end)
 
@@ -93,7 +87,7 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, mins, secs)
 end
 
--- GUI (без изменений до вкладок)
+-- Создание GUI (без изменений)
 local ClickGui = Instance.new("ScreenGui")
 ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
@@ -432,12 +426,12 @@ HomeTab.Button.TextSize = 14
 local HomePage = HomeTab.Page
 
 local HomeSectionFrame = Instance.new("Frame")
-HomeSectionFrame.Size = UDim2.new(1, -10, 0, 95)  -- будет расширяться
+HomeSectionFrame.Size = UDim2.new(1, -10, 0, 95)
 HomeSectionFrame.BackgroundTransparency = 1
 HomeSectionFrame.LayoutOrder = 1
 HomeSectionFrame.Parent = HomePage
 
--- Стрелка ещё больше (TextSize 18)
+-- Стрелка (TextSize 18)
 local HomeToggleBtn = Instance.new("TextButton")
 HomeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
 HomeToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
@@ -462,7 +456,7 @@ HomeContent.ClipsDescendants = true
 HomeContent.Parent = HomeSectionFrame
 
 local ContentList = Instance.new("UIListLayout")
-ContentList.Padding = UDim.new(0, 4)  -- чуть меньше отступ, т.к. добавится отладка
+ContentList.Padding = UDim.new(0, 4)
 ContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 ContentList.SortOrder = Enum.SortOrder.LayoutOrder
 ContentList.Parent = HomeContent
@@ -495,7 +489,7 @@ local HoneyCorner = Instance.new("UICorner")
 HoneyCorner.CornerRadius = UDim.new(0, 4)
 HoneyCorner.Parent = HoneyLabel
 
--- Debug Info Label (новый)
+-- Debug Info Label (показывает initial и текущее)
 local DebugLabel = Instance.new("TextLabel")
 DebugLabel.Size = UDim2.new(1, 0, 0, 18)
 DebugLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
@@ -560,14 +554,12 @@ local homeSectionOpen = true
 local function updateHomeSectionSize()
     if homeSectionOpen then
         HomeContent.Visible = true
-        -- Вычисляем высоту контента динамически
         local totalHeight = 0
         for _, child in ipairs(HomeContent:GetChildren()) do
             if child:IsA("Frame") or child:IsA("TextLabel") then
                 totalHeight = totalHeight + child.Size.Y.Offset
             end
         end
-        -- Добавляем паддинг между элементами
         local itemCount = 0
         for _, child in ipairs(HomeContent:GetChildren()) do
             if child:IsA("Frame") or child:IsA("TextLabel") then
@@ -608,7 +600,7 @@ StopButton.MouseButton1Click:Connect(function()
     stopEverything = stopEverythingEnabled
 end)
 
--- Обновление данных и дебаг
+-- Обновление Uptime, Session Honey и дебага
 spawn(function()
     while true do
         task.wait(0.5)
@@ -616,17 +608,16 @@ spawn(function()
         UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
 
         local curHoney, src = getHoneyFromGame()
-        local debugStr = src or "not found"
-        if curHoney then
-            debugStr = debugStr .. " = " .. tostring(curHoney)
-        end
-        DebugLabel.Text = "Debug: " .. debugStr
-
-        if initialHoney ~= nil and curHoney then
-            local sessionHoney = math.max(0, curHoney - initialHoney)
-            HoneyLabel.Text = "Session Honey: " .. sessionHoney
+        if curHoney and initialHoney then
+            local session = math.max(0, curHoney - initialHoney)
+            HoneyLabel.Text = "Session Honey: " .. session
+            DebugLabel.Text = "Init: " .. initialHoney .. " | Cur: " .. curHoney .. " (" .. src .. ")"
+        elseif curHoney and not initialHoney then
+            DebugLabel.Text = "Cur: " .. curHoney .. " (waiting init)"
+            HoneyLabel.Text = "Session Honey: --"
         else
-            HoneyLabel.Text = "Session Honey: waiting..."
+            DebugLabel.Text = "Honey not found (" .. src .. ")"
+            HoneyLabel.Text = "Session Honey: --"
         end
     end
 end)
@@ -638,4 +629,4 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ v4.4 загружен! Debug включён.")
+print("✅ v4.5 загружен! initialHoney фиксируется сразу при обнаружении.")
