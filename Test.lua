@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 6.0 (Без Session Honey, стабильный)
+    Версия: 6.2 (Settings: Player Movespeed)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -146,7 +146,9 @@ TabPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 17)
 TabPanel.BorderSizePixel = 0
 TabPanel.Parent = MainFrame
 
+-- Разделитель
 local Divider = Instance.new("Frame")
+Divider.Name = "Divider"
 Divider.Size = UDim2.new(0, 1, 1, 0)
 Divider.Position = UDim2.new(1, 0, 0, 0)
 Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
@@ -263,19 +265,116 @@ function SelectTab(tabData)
 end
 
 function UpdateCanvasSize()
-    if SelectedTab then
+    if SelectedTab and #SelectedTab.Elements > 0 then
         local height = 0
         for _, element in ipairs(SelectedTab.Elements) do
-            height = height + element.AbsoluteSize.Y + 6
+            if element and element:IsA("GuiObject") then
+                height = height + element.AbsoluteSize.Y + 6
+            end
         end
         ContentContainer.CanvasSize = UDim2.new(0, 0, 0, math.max(height + 20, ContentContainer.AbsoluteSize.Y))
     end
 end
 
--- Заглушки функций (на будущее)
+-- Функция создания слайдера
+function CreateSlider(tabData, name, min, max, default, suffix, callback)
+    local SliderFrame = Instance.new("Frame")
+    SliderFrame.Size = UDim2.new(1, -10, 0, 55)
+    SliderFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+    SliderFrame.BorderSizePixel = 0
+    SliderFrame.LayoutOrder = #tabData.Elements + 1
+    SliderFrame.Parent = tabData.Page
+
+    local SliderCorner = Instance.new("UICorner")
+    SliderCorner.CornerRadius = UDim.new(0, 6)
+    SliderCorner.Parent = SliderFrame
+
+    local SliderLabel = Instance.new("TextLabel")
+    SliderLabel.Size = UDim2.new(0, 160, 0, 20)
+    SliderLabel.Position = UDim2.new(0, 10, 0, 5)
+    SliderLabel.BackgroundTransparency = 1
+    SliderLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+    SliderLabel.Text = name .. ": " .. default .. suffix
+    SliderLabel.TextSize = 12
+    SliderLabel.Font = Enum.Font.Gotham
+    SliderLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SliderLabel.Parent = SliderFrame
+
+    -- Прогресс-бар
+    local SliderBar = Instance.new("Frame")
+    SliderBar.Size = UDim2.new(1, -20, 0, 6)
+    SliderBar.Position = UDim2.new(0, 10, 0, 32)
+    SliderBar.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    SliderBar.BorderSizePixel = 0
+    SliderBar.Parent = SliderFrame
+
+    local BarCorner = Instance.new("UICorner")
+    BarCorner.CornerRadius = UDim.new(0, 3)
+    BarCorner.Parent = SliderBar
+
+    local SliderFill = Instance.new("Frame")
+    local fillPercent = (default - min) / (max - min)
+    SliderFill.Size = UDim2.new(fillPercent, 0, 1, 0)
+    SliderFill.BackgroundColor3 = Color3.fromRGB(255, 180, 30)
+    SliderFill.BorderSizePixel = 0
+    SliderFill.Parent = SliderBar
+
+    local FillCorner = Instance.new("UICorner")
+    FillCorner.CornerRadius = UDim.new(0, 3)
+    FillCorner.Parent = SliderFill
+
+    local SliderButton = Instance.new("TextButton")
+    SliderButton.Size = UDim2.new(1, 0, 0, 20)
+    SliderButton.Position = UDim2.new(0, 0, 0, 25)
+    SliderButton.BackgroundTransparency = 1
+    SliderButton.Text = ""
+    SliderButton.Parent = SliderFrame
+
+    local dragging = false
+    local currentValue = default
+
+    local function UpdateSlider(input)
+        local barSize = SliderBar.AbsoluteSize.X
+        local relativePos = math.clamp((input.Position.X - SliderBar.AbsolutePosition.X) / barSize, 0, 1)
+        currentValue = math.floor(min + (max - min) * relativePos + 0.5)
+        SliderFill.Size = UDim2.new(relativePos, 0, 1, 0)
+        SliderLabel.Text = name .. ": " .. currentValue .. suffix
+        callback(currentValue)
+    end
+
+    SliderButton.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            UpdateSlider(input)
+        end
+    end)
+
+    SliderButton.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            UpdateSlider(input)
+        end
+    end)
+
+    table.insert(tabData.Elements, SliderFrame)
+    return {
+        Set = function(val)
+            currentValue = val
+            SliderLabel.Text = name .. ": " .. val .. suffix
+            SliderFill.Size = UDim2.new((val - min) / (max - min), 0, 1, 0)
+        end,
+        Get = function() return currentValue end
+    }
+end
+
+-- Заглушки других функций
 function CreateSection() end
 function CreateToggle() end
-function CreateSlider() end
 function CreateButton() end
 
 -- Перетаскивание меню (только за верхнюю панель)
@@ -523,6 +622,32 @@ spawn(function()
     end
 end)
 
+-- ====== ВКЛАДКА SETTINGS ======
+CreateSlider(
+    SettingsTab,
+    "Player Movespeed",
+    1,    -- минимум
+    40,   -- максимум (16 × 2.5 = 40)
+    16,   -- дефолт
+    "",
+    function(value)
+        if stopEverything then return end
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.WalkSpeed = value
+        end
+    end
+)
+
+-- При смене персонажа восстанавливаем скорость
+LocalPlayer.CharacterAdded:Connect(function(char)
+    local humanoid = char:WaitForChild("Humanoid", 5)
+    if humanoid then
+        task.wait(0.5)
+        humanoid.WalkSpeed = 16  -- сброс на дефолт при респавне
+    end
+end)
+
 -- Регистрация и выбор вкладки
 table.insert(HomeTab.Elements, HomeSectionFrame)
 SelectTab(HomeTab)
@@ -531,4 +656,5 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm GUI v6.0 загружен! (без Session Honey)")
+print("✅ Bee Swarm GUI v6.2 загружен!")
+print("🐝 Settings: Player Movespeed (max 40)")
