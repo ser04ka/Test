@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 4.1 (Фикс Session Honey, отступы, Stop Everything)
+    Версия: 4.2 (Фикс Session Honey, стрелка больше)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -15,44 +15,59 @@ local tweenInfo = TweenInfo.new(TWEEN_SPEED, Enum.EasingStyle.Quart, Enum.Easing
 
 -- Глобальные переменные
 local startTime = tick()
-local initialHoney = nil  -- будет определено позже
+local initialHoney = nil
 local stopEverything = false
 
--- Функция поиска мёда по возможным путям
+-- Функция поиска мёда по ВСЕМ возможным путям в Bee Swarm
 local function getHoneyValue()
     local player = LocalPlayer
     if not player then return 0 end
-    -- Путь 1: leaderstats.Honey (стандартно)
+
+    -- leaderstats (основной путь)
     local leaderstats = player:FindFirstChild("leaderstats")
     if leaderstats then
-        local honey = leaderstats:FindFirstChild("Honey")
-        if honey and (honey:IsA("IntValue") or honey:IsA("DoubleValue") or honey:IsA("NumberValue")) then
-            return honey.Value
+        for _, stat in ipairs(leaderstats:GetChildren()) do
+            if stat.Name == "Honey" or stat.Name == "HoneyAmount" or stat.Name == "Honey Total" then
+                if stat:IsA("IntValue") or stat:IsA("DoubleValue") or stat:IsA("NumberValue") then
+                    return stat.Value
+                end
+            end
         end
     end
-    -- Путь 2: Stats.Honey (иногда)
+
+    -- Stats (альтернативный путь)
     local stats = player:FindFirstChild("Stats")
     if stats then
-        local honey = stats:FindFirstChild("Honey")
-        if honey and (honey:IsA("IntValue") or honey:IsA("DoubleValue") or honey:IsA("NumberValue")) then
-            return honey.Value
+        for _, stat in ipairs(stats:GetChildren()) do
+            if stat.Name == "Honey" or stat.Name == "HoneyAmount" then
+                if stat:IsA("IntValue") or stat:IsA("DoubleValue") or stat:IsA("NumberValue") then
+                    return stat.Value
+                end
+            end
         end
     end
-    -- Путь 3: прямо в Player (редко)
-    local honey = player:FindFirstChild("Honey")
-    if honey and (honey:IsA("IntValue") or honey:IsA("DoubleValue") or honey:IsA("NumberValue")) then
-        return honey.Value
+
+    -- PlayerGui (иногда значения кешируются там)
+    local playerGui = player:FindFirstChild("PlayerGui")
+    if playerGui then
+        for _, child in ipairs(playerGui:GetDescendants()) do
+            if child.Name == "Honey" and (child:IsA("IntValue") or child:IsA("DoubleValue") or child:IsA("NumberValue")) then
+                return child.Value
+            end
+        end
     end
+
     return 0
 end
 
--- Ожидание появления мёда для начального значения
+-- Ожидание начального значения (с учётом, что может быть 0 на старте)
 spawn(function()
     while initialHoney == nil do
         local val = getHoneyValue()
-        if val > 0 or LocalPlayer.Character then
+        -- Ждём, пока появится персонаж и leaderstats загрузится
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
             initialHoney = val
-            print("Initial Honey set to:", initialHoney)
+            print("✅ Initial Honey set to:", initialHoney)
         else
             task.wait(2)
         end
@@ -420,14 +435,14 @@ HomeSectionFrame.BackgroundTransparency = 1
 HomeSectionFrame.LayoutOrder = 1
 HomeSectionFrame.Parent = HomePage
 
--- Кнопка раскрытия с белой стрелкой
+-- Кнопка раскрытия с БОЛЬШОЙ белой стрелкой (TextSize 16)
 local HomeToggleBtn = Instance.new("TextButton")
 HomeToggleBtn.Size = UDim2.new(1, 0, 0, 28)
 HomeToggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
 HomeToggleBtn.BorderSizePixel = 0
 HomeToggleBtn.Text = "  ▼  Home"
 HomeToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-HomeToggleBtn.TextSize = 13
+HomeToggleBtn.TextSize = 16  -- увеличено
 HomeToggleBtn.Font = Enum.Font.GothamBold
 HomeToggleBtn.TextXAlignment = Enum.TextXAlignment.Left
 HomeToggleBtn.AutoButtonColor = false
@@ -437,16 +452,16 @@ local ToggleBtnCorner = Instance.new("UICorner")
 ToggleBtnCorner.CornerRadius = UDim.new(0, 6)
 ToggleBtnCorner.Parent = HomeToggleBtn
 
--- Контейнер для содержимого (увеличенная высота, отступы)
+-- Контейнер для содержимого
 local HomeContent = Instance.new("Frame")
-HomeContent.Size = UDim2.new(1, 0, 0, 80)  -- достаточно для трёх элементов с отступами
+HomeContent.Size = UDim2.new(1, 0, 0, 80)
 HomeContent.Position = UDim2.new(0, 0, 0, 32)
 HomeContent.BackgroundTransparency = 1
 HomeContent.ClipsDescendants = true
 HomeContent.Parent = HomeSectionFrame
 
 local ContentList = Instance.new("UIListLayout")
-ContentList.Padding = UDim.new(0, 6)  -- увеличенный отступ
+ContentList.Padding = UDim.new(0, 6)
 ContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 ContentList.SortOrder = Enum.SortOrder.LayoutOrder
 ContentList.Parent = HomeContent
@@ -531,14 +546,12 @@ local homeSectionOpen = true
 local function updateHomeSectionSize()
     if homeSectionOpen then
         HomeContent.Visible = true
-        -- Вычисляем реальную высоту контента
         local contentHeight = 0
         for _, child in ipairs(HomeContent:GetChildren()) do
             if child:IsA("Frame") or child:IsA("TextLabel") then
                 contentHeight = contentHeight + child.Size.Y.Offset
             end
         end
-        -- Добавляем суммарный паддинг
         local padding = ContentList.Padding.Offset
         local itemCount = 0
         for _, child in ipairs(HomeContent:GetChildren()) do
@@ -558,7 +571,6 @@ local function updateHomeSectionSize()
     UpdateCanvasSize()
 end
 
--- Вызов после создания всех элементов
 updateHomeSectionSize()
 
 -- Клик по кнопке раскрытия
@@ -582,10 +594,10 @@ StopButton.MouseButton1Click:Connect(function()
     stopEverything = stopEverythingEnabled
 end)
 
--- Обновление Uptime и Session Honey
+-- Обновление Uptime и Session Honey (чаще и точнее)
 spawn(function()
     while true do
-        task.wait(1)
+        task.wait(0.5)  -- обновляем 2 раза в секунду для быстрой реакции
         local elapsed = tick() - startTime
         UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
 
@@ -599,7 +611,7 @@ spawn(function()
     end
 end)
 
--- Регистрируем HomeSectionFrame в элементах таба для правильного скролла
+-- Регистрируем HomeSectionFrame в элементах таба
 table.insert(HomeTab.Elements, HomeSectionFrame)
 
 -- Выбираем Home по умолчанию
@@ -609,6 +621,6 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm Click GUI v4.1 загружен!")
-print("🐝 Home: Uptime, Session Honey, Stop Everything")
-print("   Белая стрелка раскрывает/скрывает блок Home")
+print("✅ Bee Swarm Click GUI v4.2 загружен!")
+print("🐝 Стрелка Home увеличена (TextSize 16)")
+print("🐝 Session Honey ищет Honey/HoneyAmount везде")
