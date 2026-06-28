@@ -2,7 +2,7 @@
     Bee Swarm Simulator - Visual Click GUI
     Стиль: Тёмный с золотым акцентом
     Экзекьютер: Delta
-    Версия: 3.3 (Меньше по высоте + иконка Home крупнее)
+    Версия: 3.4 (Компактная высота 290, табы плотнее)
 ]]
 
 -- Сервисы
@@ -26,7 +26,7 @@ ClickGui.Parent = CoreGui
 local IconButton = Instance.new("TextButton")
 IconButton.Name = "IconButton"
 IconButton.Size = UDim2.new(0, 45, 0, 45)
-IconButton.Position = UDim2.new(0.5, -22, 0, 30)
+IconButton.Position = UDim2.new(0.5, -22, 0, 30)  -- центр сверху
 IconButton.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 IconButton.BorderSizePixel = 0
 IconButton.TextColor3 = Color3.fromRGB(255, 200, 60)
@@ -47,11 +47,11 @@ local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
 
--- ====== ОСНОВНОЕ МЕНЮ (уменьшена высота до 350) ======
+-- ====== ОСНОВНОЕ МЕНЮ (высота 290, идеально под табы) ======
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 500, 0, 350)  -- было 400
-MainFrame.Position = UDim2.new(0.5, -250, 0.5, -175)  -- центровка под новую высоту
+MainFrame.Size = UDim2.new(0, 500, 0, 290)  -- уменьшено с 350
+MainFrame.Position = UDim2.new(0.5, -250, 0.5, -145)  -- центровка
 MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = false
@@ -62,7 +62,7 @@ local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 6)
 MainCorner.Parent = MainFrame
 
--- Верхняя панель (перетаскивается только за неё)
+-- Верхняя панель (жёлтая, за неё тянем)
 local TopBar = Instance.new("Frame")
 TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, 0, 0, 35)
@@ -182,12 +182,12 @@ UIListLayout.Parent = ContentContainer
 local Tabs = {}
 local SelectedTab = nil
 
--- Функция создания таба (уменьшен отступ между табами)
+-- Функция создания таба (уменьшен отступ между табами до 33)
 function CreateTab(name, icon)
     local TabButton = Instance.new("TextButton")
     TabButton.Name = name
     TabButton.Size = UDim2.new(1, -20, 0, 32)
-    TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 35) + 10)  -- было 38, стало 35 для компактности
+    TabButton.Position = UDim2.new(0, 10, 0, (#Tabs * 33) + 10)  -- 33 вместо 35
     TabButton.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
     TabButton.BorderSizePixel = 0
     TabButton.TextColor3 = Color3.fromRGB(180, 180, 190)
@@ -276,7 +276,7 @@ end
 
 -- ====== DRAG ДЛЯ МЕНЮ (только за верхнюю панель) ======
 local menuDragging = false
-local menuDragInput, menuDragStart, menuStartPos
+local menuDragStart, menuStartPos
 
 TopBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -368,6 +368,6 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm Click GUI v3.3 загружен!")
-print("🐝 Высота меню уменьшена до 350, табы компактнее.")
-print("   Драг только за верхнюю панель.")
+print("✅ Bee Swarm Click GUI v3.4 загружен!")
+print("🐝 Высота меню: 290, табы плотнее, низ аккуратно у Settings.")
+print("   Перетаскивание: только за верхнюю жёлтую панель.")
