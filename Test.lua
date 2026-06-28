@@ -2,7 +2,7 @@
     Bee Swarm Simulator - Visual Click GUI
     Стиль: Тёмный с золотым акцентом
     Экзекьютер: Delta
-    Версия: 3.0 (Только табы, без функционала)
+    Версия: 3.2 (Иконка Home крупнее)
 ]]
 
 -- Сервисы
@@ -274,9 +274,6 @@ function UpdateCanvasSize()
     end
 end
 
--- (Функции CreateSection, CreateToggle, CreateSlider, CreateButton сохранены, но не используются, чтобы ты мог легко добавить элементы позже)
--- Они идентичны предыдущей версии, просто не вызываются. При необходимости раскомментируй.
-
 -- ====== DRAG ДЛЯ МЕНЮ ======
 local menuDragging = false
 local menuDragInput, menuDragStart, menuStartPos
@@ -352,14 +349,17 @@ IconButton.InputEnded:Connect(function(input)
     end
 end)
 
--- ====== СОЗДАНИЕ ВКЛАДОК (ТОЛЬКО ТАБЫ, БЕЗ ФУНКЦИОНАЛА) ======
+-- ====== СОЗДАНИЕ ВКЛАДОК ======
 local HomeTab = CreateTab("Home", "⌂")
 local FarmingTab = CreateTab("Farming", "✿")
 local CombatTab = CreateTab("Combat", "⚔")
 local QuestTab = CreateTab("Quest", "📕")
-local PlantersTab = CreateTab("Planters", "🪴")
+local PlantersTab = CreateTab("Planters", "🌱")
 local ToysTab = CreateTab("Toys", "🧸")
 local SettingsTab = CreateTab("Settings", "⚙")
+
+-- Делаем иконку Home чуть больше
+HomeTab.Button.TextSize = 14
 
 -- Выбираем вкладку Home по умолчанию
 SelectTab(HomeTab)
@@ -368,6 +368,5 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ Bee Swarm Click GUI v3.0 загружен!")
-print("🐝 Новые вкладки без функционала:")
-print("   Home ⌂ | Farming ✿ | Combat ⚔ | Quest 📕 | Planters 🪴 | Toys 🧸 | Settings ⚙")
+print("✅ Bee Swarm Click GUI v3.2 загружен!")
+print("🐝 Иконка Home увеличена (TextSize 14)")
