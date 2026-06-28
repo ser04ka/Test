@@ -2,7 +2,7 @@
     Bee Swarm Simulator - Visual Click GUI
     Стиль: Тёмный с золотым акцентом
     Экзекьютер: Delta
-    Версия: 2.0
+    Версия: 2.1 (Фикс иконки и крестика)
 ]]
 
 -- Сервисы
@@ -47,18 +47,6 @@ IconStroke.Parent = IconButton
 local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
-
--- Тень под иконкой
-local IconShadow = Instance.new("ImageLabel")
-IconShadow.Size = UDim2.new(0, 49, 0, 49)
-IconShadow.Position = UDim2.new(0.5, -24, 0.5, -24)
-IconShadow.BackgroundTransparency = 1
-IconShadow.Image = "rbxassetid://6015897843" -- стандартная тень Roblox
-IconShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-IconShadow.ImageTransparency = 0.6
-IconShadow.ScaleType = Enum.ScaleType.Slice
-IconShadow.SliceCenter = Rect.new(49, 49, 209, 209)
-IconShadow.Parent = IconButton
 
 -- ====== ОСНОВНОЕ МЕНЮ ======
 local MainFrame = Instance.new("Frame")
@@ -119,22 +107,38 @@ TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TopBar
 
--- Кнопка закрытия
+-- ====== КНОПКА ЗАКРЫТИЯ (КАСТОМНЫЙ КРЕСТИК) ======
 local CloseButton = Instance.new("TextButton")
 CloseButton.Size = UDim2.new(0, 28, 0, 28)
 CloseButton.Position = UDim2.new(1, -34, 0.5, -14)
 CloseButton.BackgroundColor3 = Color3.fromRGB(50, 30, 30)
 CloseButton.BorderSizePixel = 0
-CloseButton.TextColor3 = Color3.fromRGB(255, 100, 100)
-CloseButton.Text = "✕"
-CloseButton.TextSize = 16
-CloseButton.Font = Enum.Font.GothamBold
+CloseButton.Text = "" -- Убираем текстовый крестик
+CloseButton.AutoButtonColor = false
 CloseButton.Parent = TopBar
 
 -- Закругление кнопки закрытия
 local CloseCorner = Instance.new("UICorner")
 CloseCorner.CornerRadius = UDim.new(0, 6)
 CloseCorner.Parent = CloseButton
+
+-- Рисуем крестик линиями (первая линия \)
+local Line1 = Instance.new("Frame")
+Line1.Size = UDim2.new(0, 2, 0, 16)
+Line1.Position = UDim2.new(0.5, -1, 0.5, -8)
+Line1.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+Line1.BorderSizePixel = 0
+Line1.Rotation = 45
+Line1.Parent = CloseButton
+
+-- Вторая линия /
+local Line2 = Instance.new("Frame")
+Line2.Size = UDim2.new(0, 2, 0, 16)
+Line2.Position = UDim2.new(0.5, -1, 0.5, -8)
+Line2.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+Line2.BorderSizePixel = 0
+Line2.Rotation = -45
+Line2.Parent = CloseButton
 
 -- Левая панель (табы)
 local TabPanel = Instance.new("Frame")
@@ -553,7 +557,7 @@ end)
 
 -- ====== DRAG ДЛЯ ИКОНКИ (квадратика) ======
 local iconDragging = false
-local iconDragInput, iconDragStart, iconStartPos
+local iconDragStart, iconStartPos
 
 IconButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -582,7 +586,6 @@ end)
 -- ====== ОТКРЫТИЕ/ЗАКРЫТИЕ МЕНЮ ======
 -- При клике на иконку - показываем меню
 IconButton.MouseButton1Click:Connect(function()
-    -- Игнорируем клик если был драг (проверяем расстояние)
     if iconDragging then return end
     
     MainFrame.Visible = true
@@ -593,40 +596,14 @@ end)
 CloseButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = false
     IconButton.Visible = true
-    -- Иконка остаётся там же где была (не сбрасываем позицию)
 end)
 
 -- Защита от ложного клика при драге
 IconButton.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        -- Небольшая задержка чтобы отделить драг от клика
         task.wait(0.05)
         iconDragging = false
     end
-end)
-
--- ====== АНИМАЦИЯ ПОЯВЛЕНИЯ МЕНЮ ======
-MainFrame.Visible = false -- Изначально скрыто
-MainFrame.BackgroundTransparency = 1 -- Для анимации
-
--- Функция показа с анимацией
-local function ShowMenu()
-    MainFrame.Visible = true
-    MainFrame.BackgroundTransparency = 1
-    MainFrame.Size = UDim2.new(0, 500, 0, 0)
-    
-    TweenService:Create(MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 500, 0, 400),
-        BackgroundTransparency = 0
-    }):Play()
-    
-    IconButton.Visible = false
-end
-
--- Переопределяем клик на иконку с анимацией
-IconButton.MouseButton1Click:Connect(function()
-    if iconDragging then return end
-    ShowMenu()
 end)
 
 -- ====== ИНИЦИАЛИЗАЦИЯ ТАБОВ ======
@@ -736,16 +713,11 @@ end)
 SelectTab(Tabs[1])
 
 -- ====== ФИНАЛЬНЫЕ НАСТРОЙКИ ======
--- Иконка видна, меню скрыто при запуске
 IconButton.Visible = true
 MainFrame.Visible = false
-MainFrame.BackgroundTransparency = 0 -- Сбрасываем для нормального отображения
-MainFrame.Size = UDim2.new(0, 500, 0, 400) -- Полный размер
 
-print("✅ Bee Swarm Click GUI v2.0 загружен!")
-print("🐝 Особенности:")
-print("   - Круглый значок с закруглёнными краями")
-print("   - Позиция: центр сверху (отступ 30px)")
-print("   - Перетаскивание значка и меню")
-print("   - Плавная анимация открытия")
-print("   - Значок остаётся на месте после закрытия")
+print("✅ Bee Swarm Click GUI v2.1 загружен!")
+print("🐝 Фиксы:")
+print("   - Убрана чёрная тень с иконки")
+print("   - Крестик заменён на кастомный из двух линий")
+print("   - Крестик красный, чёткий, без размытия")
