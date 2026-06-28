@@ -1,7 +1,7 @@
 --[[
     Bee Swarm Simulator - Visual Click GUI
     Экзекьютер: Delta
-    Версия: 4.5 (Фикс initialHoney – мгновенный захват)
+    Версия: 4.6 (initialHoney фиксируется в основном цикле)
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -16,14 +16,13 @@ local tweenInfo = TweenInfo.new(TWEEN_SPEED, Enum.EasingStyle.Quart, Enum.Easing
 local startTime = tick()
 local initialHoney = nil
 local stopEverything = false
-local debugText = ""
 
--- Поиск мёда (без привязки к персонажу)
+-- Поиск мёда
 local function getHoneyFromGame()
     local player = LocalPlayer
     if not player then return nil, "no player" end
 
-    -- 1. leaderstats / stats
+    -- leaderstats
     local leaderstats = player:FindFirstChild("leaderstats") or player:FindFirstChild("stats")
     if leaderstats then
         for _, stat in ipairs(leaderstats:GetChildren()) do
@@ -36,14 +35,14 @@ local function getHoneyFromGame()
         end
     end
 
-    -- 2. Прямо в Player
+    -- Player
     for _, child in ipairs(player:GetChildren()) do
         if child.Name == "Honey" and (child:IsA("IntValue") or child:IsA("NumberValue")) then
-            return child.Value, "Player/" .. child.Name
+            return child.Value, "Player/Honey"
         end
     end
 
-    -- 3. GUI (экран)
+    -- GUI (экран)
     local playerGui = player:FindFirstChild("PlayerGui")
     if playerGui then
         for _, element in ipairs(playerGui:GetDescendants()) do
@@ -66,19 +65,6 @@ local function getHoneyFromGame()
     return nil, "not found"
 end
 
--- Быстрый захват начального значения (ждём первого успеха)
-spawn(function()
-    while initialHoney == nil do
-        local val, src = getHoneyFromGame()
-        if val then
-            initialHoney = val
-            debugText = "Initial: " .. tostring(initialHoney) .. " (" .. src .. ")"
-            print("✅ Initial Honey: " .. debugText)
-        end
-        task.wait(0.3)  -- проверяем часто
-    end
-end)
-
 -- Форматирование времени
 local function formatTime(seconds)
     local hours = math.floor(seconds / 3600)
@@ -87,12 +73,13 @@ local function formatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, mins, secs)
 end
 
--- Создание GUI (без изменений)
+-- Создание GUI
 local ClickGui = Instance.new("ScreenGui")
 ClickGui.Name = "BeeSwarmVisuals"
 ClickGui.ResetOnSpawn = false
 ClickGui.Parent = CoreGui
 
+-- Иконка-квадратик
 local IconButton = Instance.new("TextButton")
 IconButton.Name = "IconButton"
 IconButton.Size = UDim2.new(0, 45, 0, 45)
@@ -115,6 +102,7 @@ local IconCorner = Instance.new("UICorner")
 IconCorner.CornerRadius = UDim.new(0, 14)
 IconCorner.Parent = IconButton
 
+-- Основное меню
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 500, 0, 290)
@@ -129,6 +117,7 @@ local MainCorner = Instance.new("UICorner")
 MainCorner.CornerRadius = UDim.new(0, 6)
 MainCorner.Parent = MainFrame
 
+-- Верхняя панель
 local TopBar = Instance.new("Frame")
 TopBar.Name = "TopBar"
 TopBar.Size = UDim2.new(1, 0, 0, 35)
@@ -167,6 +156,7 @@ TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TopBar
 
+-- Кнопка закрытия
 local CloseButton = Instance.new("TextButton")
 CloseButton.Size = UDim2.new(0, 28, 0, 28)
 CloseButton.Position = UDim2.new(1, -34, 0.5, -14)
@@ -331,6 +321,7 @@ function UpdateCanvasSize()
     end
 end
 
+-- Заглушки функций создания элементов
 function CreateSection(tabData, title) end
 function CreateToggle(tabData, section, name, default, callback) end
 function CreateSlider(tabData, section, name, min, max, default, suffix, callback) end
@@ -489,20 +480,6 @@ local HoneyCorner = Instance.new("UICorner")
 HoneyCorner.CornerRadius = UDim.new(0, 4)
 HoneyCorner.Parent = HoneyLabel
 
--- Debug Info Label (показывает initial и текущее)
-local DebugLabel = Instance.new("TextLabel")
-DebugLabel.Size = UDim2.new(1, 0, 0, 18)
-DebugLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-DebugLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-DebugLabel.Text = "Debug: waiting..."
-DebugLabel.TextSize = 10
-DebugLabel.Font = Enum.Font.Gotham
-DebugLabel.Parent = HomeContent
-
-local DebugCorner = Instance.new("UICorner")
-DebugCorner.CornerRadius = UDim.new(0, 4)
-DebugCorner.Parent = DebugLabel
-
 -- Stop Everything Toggle
 local StopFrame = Instance.new("Frame")
 StopFrame.Size = UDim2.new(1, 0, 0, 22)
@@ -600,7 +577,7 @@ StopButton.MouseButton1Click:Connect(function()
     stopEverything = stopEverythingEnabled
 end)
 
--- Обновление Uptime, Session Honey и дебага
+-- Главный цикл обновления (здесь же запоминаем initialHoney)
 spawn(function()
     while true do
         task.wait(0.5)
@@ -608,16 +585,15 @@ spawn(function()
         UptimeLabel.Text = "Uptime: " .. formatTime(elapsed)
 
         local curHoney, src = getHoneyFromGame()
-        if curHoney and initialHoney then
+        if curHoney then
+            -- При первом получении запоминаем initialHoney
+            if initialHoney == nil then
+                initialHoney = curHoney
+            end
             local session = math.max(0, curHoney - initialHoney)
             HoneyLabel.Text = "Session Honey: " .. session
-            DebugLabel.Text = "Init: " .. initialHoney .. " | Cur: " .. curHoney .. " (" .. src .. ")"
-        elseif curHoney and not initialHoney then
-            DebugLabel.Text = "Cur: " .. curHoney .. " (waiting init)"
-            HoneyLabel.Text = "Session Honey: --"
         else
-            DebugLabel.Text = "Honey not found (" .. src .. ")"
-            HoneyLabel.Text = "Session Honey: --"
+            HoneyLabel.Text = "Session Honey: waiting..."
         end
     end
 end)
@@ -629,4 +605,4 @@ SelectTab(HomeTab)
 IconButton.Visible = true
 MainFrame.Visible = false
 
-print("✅ v4.5 загружен! initialHoney фиксируется сразу при обнаружении.")
+print("✅ v4.6 загружен! initialHoney запоминается при первом обнаружении.")
