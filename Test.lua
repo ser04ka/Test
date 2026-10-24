@@ -1,34 +1,18 @@
--- === Swarm Tweaker: Lite Project (Ultra Aggressive Rejoin v3) ===
-
+-- === Swarm Tweaker: Lite Project (Final Stable Rejoin) ===
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
-local CoreGui = game:GetService("CoreGui")
 local GuiService = game:GetService("GuiService")
-local LogService = game:GetService("LogService")
 
 local player = Players.LocalPlayer
-while not player do
-    task.wait()
-    player = Players.LocalPlayer
-end
-
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- Очистка старых меню
-for _, name in ipairs({
-    "LiteProjectUI",
-    "LiteProjectMinGui",
-    "SwarmTweakerPro",
-    "SwarmMinButton",
-    "SwarmTweaker"
-}) do
-    if playerGui:FindFirstChild(name) then
-        playerGui[name]:Destroy()
-    end
+for _, name in ipairs({"LiteProjectUI", "LiteProjectMinGui", "SwarmTweakerPro", "SwarmMinButton", "SwarmTweaker"}) do
+    if playerGui:FindFirstChild(name) then playerGui[name]:Destroy() end
 end
 
 local THEME = {
@@ -51,454 +35,106 @@ _G.CurrentFPS = 60
 local isDraggingSlider = false
 
 -- ============================================================
--- === УЛЬТРА-АГРЕССИВНЫЙ АВТО-РЕДЖОИН v3 ===
+-- === УЛУЧШЕННЫЙ И БЕЗОПАСНЫЙ АВТО-РЕДЖОИН ===
 -- ============================================================
+local REJOIN_FILE = "LiteProject_Server.txt"
+local isRejoining = false
+local lastRejoinTime = 0
 
-if _G.AutoRejoin == nil then _G.AutoRejoin = true end
-if _G.RejoinOnAnyError == nil then _G.RejoinOnAnyError = true end
+-- Сохраняем сервер в файл и в память
+local function saveServer()
+    pcall(function()
+        _G.SavedPlaceId = game.PlaceId
+        _G.SavedJobId = game.JobId
+        if writefile and game.JobId ~= "" then
+            writefile(REJOIN_FILE, tostring(game.PlaceId) .. "|" .. game.JobId)
+        end
+    end)
+end
 
-_G.RejoinErrorCodes = {273, 267, 287, 529, 304, 319, 317, 292}
-_G.GAME_READY_DELAY = 15 -- Ждём 15 секунд после загрузки перед реакцией на ошибки
-
-if not _G.LiteProjectRejoinLoaded then
-    _G.LiteProjectRejoinLoaded = true
-
-    local REJOIN_FILE = "LiteProject_Server.txt"
-    local REJOIN_STATE = {
-        busy = false,
-        last = 0,
-        gameReady = false,
-        gameReadyTime = tick() + _G.GAME_READY_DELAY
-    }
-
-    local memoryServer = {placeId = nil, jobId = nil}
-
-    local function safeWrite(path, data)
-        pcall(function()
-            if type(writefile) == "function" then writefile(path, data) end
-        end)
-    end
-
-    local function safeRead(path)
-        local ok, result = pcall(function()
-            if type(readfile) == "function" and type(isfile) == "function" and isfile(path) then
-                return readfile(path)
-            end
-            return nil
-        end)
-        if ok then return result end
-        return nil
-    end
-
-    local function containsErrorCode(text)
-        text = tostring(text or "")
-        if text == "" then return false end
-        for _, code in ipairs(_G.RejoinErrorCodes or {}) do
-            local c = tostring(code)
-            if text:find("%f[%d]" .. c .. "%f[%D]") or text:find("%f[%d]" .. c .. "$") then
-                return true
+-- Получаем сохраненный сервер
+local function getSavedServer()
+    local pId, jId = nil, nil
+    pcall(function()
+        if isfile and readfile and isfile(REJOIN_FILE) then
+            local data = readfile(REJOIN_FILE)
+            local sep = string.find(data, "|")
+            if sep then
+                pId = tonumber(string.sub(data, 1, sep - 1))
+                jId = string.sub(data, sep + 1)
             end
         end
-        return false
-    end
+    end)
+    -- Если файл не сработал, берем из памяти
+    if not pId then pId = _G.SavedPlaceId end
+    if not jId then jId = _G.SavedJobId end
+    return pId, jId
+end
 
-    local function getSavedServer()
-        if memoryServer.placeId and memoryServer.jobId and memoryServer.jobId ~= "" then
-            return memoryServer.placeId, memoryServer.jobId
-        end
-        local data = safeRead(REJOIN_FILE)
-        if not data then return nil, nil end
-        local placeStr, jobStr = string.match(tostring(data), "^(%d+)|(.*)$")
-        local placeId = tonumber(placeStr)
-        if placeId and jobStr and jobStr ~= "" then
-            return placeId, jobStr
-        end
-        return nil, nil
-    end
-
-    local function saveCurrentServer()
-        pcall(function()
-            local placeId = game.PlaceId
-            local jobId = game.JobId
-            if placeId and placeId > 0 and jobId and jobId ~= "" then
-                memoryServer.placeId = placeId
-                memoryServer.jobId = jobId
-                safeWrite(REJOIN_FILE, tostring(placeId) .. "|" .. tostring(jobId))
-            end
-        end)
-    end
-
-    local function shouldRejoin(msg)
-        if not _G.AutoRejoin then return false end
-        if not REJOIN_STATE.gameReady then return false end
-        if _G.RejoinOnAnyError then return true end
-        return containsErrorCode(msg)
-    end
-
-    local function tryClickReconnectButton()
-        pcall(function()
-            local robloxGui = CoreGui:FindFirstChild("RobloxGui")
-            if not robloxGui then return end
-
-            -- Ищем кнопки Reconnect, Rejoin, OK, Leave
-            local buttonNames = {"ReconnectButton", "RejoinButton", "OKButton", "LeaveButton", "CloseButton"}
-            local buttonTexts = {"reconnect", "rejoin", "ok", "leave", "close", "try again"}
-
-            for _, btnName in ipairs(buttonNames) do
-                local btn = robloxGui:FindFirstChild(btnName, true)
-                if btn and btn:IsA("TextButton") and btn.Visible then
-                    btn:MouseButton1Click()
-                    task.wait(1)
-                    return true
-                end
-            end
-
-            -- Ищем по тексту
-            for _, descendant in ipairs(robloxGui:GetDescendants()) do
-                if descendant:IsA("TextButton") and descendant.Visible then
-                    local text = string.lower(descendant.Text or "")
-                    for _, search in ipairs(buttonTexts) do
-                        if text:find(search, 1, true) then
-                            descendant:MouseButton1Click()
-                            task.wait(1)
-                            return true
-                        end
-                    end
-                end
-            end
-        end)
-        return false
-    end
-
-    local function doRejoinCore(reason, force)
-        reason = tostring(reason or "Unknown")
+-- Функция перезахода
+local function doRejoin(force)
+    if isRejoining then return end
+    if not force and not _G.AutoRejoin then return end
+    if tick() - lastRejoinTime < 15 then return end -- Защита от спама (чтобы не было 273)
+    
+    isRejoining = true
+    lastRejoinTime = tick()
+    
+    task.spawn(function()
+        local pId, jId = getSavedServer()
+        local targetPlace = pId or game.PlaceId
         
-        if not force and not shouldRejoin(reason) then return end
-        if REJOIN_STATE.busy and not force then return end
-        if not force and tick() - REJOIN_STATE.last < 5 then return end
-
-        REJOIN_STATE.busy = true
-        REJOIN_STATE.last = tick()
-
-        task.spawn(function()
-            -- Сначала пытаемся нажать кнопку Reconnect на экране ошибки
-            tryClickReconnectButton()
-
-            local attempts = force and 5 or 12
-
-            for attempt = 1, attempts do
-                if not force and not _G.AutoRejoin then break end
-                if not force and not REJOIN_STATE.gameReady then break end
-
-                saveCurrentServer()
-
-                local savedPlace, savedJob = getSavedServer()
-                local placeId = savedPlace or game.PlaceId
-                local jobId = savedJob or game.JobId
-
-                if placeId and placeId > 0 then
-                    -- Пробуем TeleportToPlaceInstance первые 4 попытки
-                    local useJob = jobId and jobId ~= "" and attempt <= 4
-                    
-                    local ok = pcall(function()
-                        local target = Players.LocalPlayer
-                        if target and target.Parent then
-                            if useJob then
-                                TeleportService:TeleportToPlaceInstance(placeId, jobId, target)
-                            else
-                                TeleportService:Teleport(placeId, target)
-                            end
-                        else
-                            if useJob then
-                                TeleportService:TeleportToPlaceInstance(placeId, jobId)
-                            else
-                                TeleportService:Teleport(placeId)
-                            end
-                        end
-                    end)
-
-                    if ok then
-                        task.wait(4)
-                        break
-                    end
-                end
-
-                task.wait(math.clamp(1.5 + attempt * 0.5, 1.5, 10))
-            end
-
-            task.delay(6, function()
-                REJOIN_STATE.busy = false
-            end)
-        end)
-    end
-
-    _G.LiteProjectDoRejoin = doRejoinCore
-
-    -- Ждём загрузки игры
-    task.spawn(function()
-        task.wait(_G.GAME_READY_DELAY)
-        REJOIN_STATE.gameReady = true
-    end)
-
-    -- Первичное сохранение
-    saveCurrentServer()
-
-    pcall(function()
-        player.CharacterAdded:Connect(function()
-            saveCurrentServer()
-        end)
-    end)
-
-    task.spawn(function()
-        while task.wait(10) do
-            if _G.AutoRejoin then saveCurrentServer() end
-        end
-    end)
-
-    -- ============================================================
-    -- === МОНИТОРИНГ COREGUI (УЛУЧШЕННЫЙ) ===
-    -- ============================================================
-
-    local ERROR_PROMPT_NAMES = {
-        "ErrorPrompt", "DisconnectPrompt", "LeaveGameConfirm",
-        "ErrorScreen", "DisconnectScreen", "ReconnectPrompt"
-    }
-
-    local ERROR_TEXT_PATTERNS = {
-        "error", "disconnect", "kicked", "failed", "connection",
-        "timeout", "leave", "rejoin", "reconnect", "lost connection"
-    }
-
-    local function checkForErrorPrompt()
-        if not REJOIN_STATE.gameReady then return end
-        if not _G.AutoRejoin then return end
-
+        -- Пытаемся перезайти
         pcall(function()
-            local robloxGui = CoreGui:FindFirstChild("RobloxGui")
-            if not robloxGui then return end
-
-            -- Ищем по именам
-            for _, promptName in ipairs(ERROR_PROMPT_NAMES) do
-                local prompt = robloxGui:FindFirstChild(promptName, true)
-                if prompt and prompt.Visible then
-                    doRejoinCore("ErrorPrompt:" .. promptName, false)
-                    return
-                end
-            end
-
-            -- Ищем по тексту в видимых элементах
-            for _, descendant in ipairs(robloxGui:GetDescendants()) do
-                if descendant:IsA("GuiObject") and descendant.Visible then
-                    local text = ""
-                    
-                    if descendant:IsA("TextLabel") or descendant:IsA("TextButton") or descendant:IsA("TextBox") then
-                        text = descendant.Text or ""
-                    end
-
-                    if text ~= "" then
-                        local lower = string.lower(text)
-                        
-                        -- Проверяем коды ошибок
-                        if containsErrorCode(text) then
-                            doRejoinCore("ErrorCodeInGui:" .. text, false)
-                            return
-                        end
-
-                        -- Проверяем паттерны ошибок
-                        for _, pattern in ipairs(ERROR_TEXT_PATTERNS) do
-                            if lower:find(pattern, 1, true) then
-                                -- Убеждаемся, что это не просто случайное совпадение
-                                if #text < 500 then -- Игнорируем длинные тексты
-                                    doRejoinCore("ErrorPatternInGui:" .. pattern, false)
-                                    return
-                                end
-                            end
-                        end
-                    end
-                end
+            if jId and jId ~= "" then
+                TeleportService:TeleportToPlaceInstance(targetPlace, jId, player)
+            else
+                TeleportService:Teleport(targetPlace, player)
             end
         end)
-    end
-
-    -- Быстрый цикл проверки CoreGui (каждые 0.2 секунды)
-    task.spawn(function()
-        while task.wait(0.2) do
-            checkForErrorPrompt()
-        end
-    end)
-
-    -- ============================================================
-    -- === СТАНДАРТНЫЕ ОБРАБОТЧИКИ ===
-    -- ============================================================
-
-    pcall(function()
-        TeleportService.TeleportInitFailed:Connect(function(targetPlayer, result)
-            pcall(function()
-                if targetPlayer == Players.LocalPlayer then
-                    doRejoinCore("TeleportInitFailed:" .. tostring(result), false)
-                end
-            end)
-        end)
-    end)
-
-    pcall(function()
-        TeleportService.LocalPlayerTeleported:Connect(function(result)
-            pcall(function()
-                if result ~= Enum.TeleportResult.Success then
-                    doRejoinCore("LocalPlayerTeleported:" .. tostring(result), false)
-                end
-            end)
-        end)
-    end)
-
-    pcall(function()
-        TeleportService.ErrorMessage:Connect(function(msg)
-            pcall(function()
-                doRejoinCore("TeleportErrorMessage:" .. tostring(msg), false)
-            end)
-        end)
-    end)
-
-    pcall(function()
-        GuiService.ErrorMessageChanged:Connect(function()
-            pcall(function()
-                local msg = GuiService.ErrorMessage
-                if msg and msg ~= "" then
-                    doRejoinCore("GuiError:" .. tostring(msg), false)
-                end
-            end)
-        end)
-    end)
-
-    pcall(function()
-        local msg = GuiService.ErrorMessage
-        if msg and msg ~= "" then
-            task.wait(2) -- Даём время загрузиться
-            doRejoinCore("GuiErrorInitial:" .. tostring(msg), false)
-        end
-    end)
-
-    pcall(function()
-        LogService.MessageOut:Connect(function(message, messageType)
-            pcall(function()
-                if messageType == Enum.MessageType.MessageError or messageType == Enum.MessageType.MessageWarning then
-                    local msg = tostring(message)
-                    local lower = string.lower(msg)
-                    if containsErrorCode(msg)
-                        or lower:find("disconnect", 1, true)
-                        or lower:find("connection", 1, true)
-                        or lower:find("timeout", 1, true)
-                        or lower:find("kick", 1, true) then
-                        doRejoinCore("LogError:" .. msg, false)
-                    end
-                end
-            end)
-        end)
-    end)
-
-    pcall(function()
-        local NetworkClient = game:GetService("NetworkClient")
-        NetworkClient.ClientDisconnected:Connect(function(msg)
-            pcall(function()
-                doRejoinCore("NetworkClientDisconnected:" .. tostring(msg), false)
-            end)
-        end)
-    end)
-
-    pcall(function()
-        Players.PlayerDisconnecting:Connect(function(plr)
-            pcall(function()
-                if plr == Players.LocalPlayer then
-                    doRejoinCore("PlayerDisconnecting", false)
-                end
-            end)
-        end)
-    end)
-
-    pcall(function()
-        player.AncestryChanged:Connect(function()
-            pcall(function()
-                if not player.Parent then
-                    doRejoinCore("LocalPlayerRemoved", false)
-                end
-            end)
-        end)
-    end)
-
-    -- Watchdog: если серверное время не обновляется
-    task.spawn(function()
-        local lastDistributed = nil
-        local lastGood = tick()
-
-        pcall(function()
-            lastDistributed = Workspace.DistributedGameTime
-        end)
-
-        while task.wait(3) do
-            if _G.AutoRejoin and REJOIN_STATE.gameReady then
-                local ok, current = pcall(function()
-                    return Workspace.DistributedGameTime
-                end)
-
-                if ok and current ~= lastDistributed then
-                    lastDistributed = current
-                    lastGood = tick()
-                elseif tick() - lastGood > 30 then
-                    doRejoinCore("WatchdogNoServerUpdate", false)
-                    lastGood = tick()
-                end
-            end
-        end
-    end)
-
-    -- Хук Kick
-    pcall(function()
-        if hookmetamethod and getnamecallmethod and checkcaller then
-            local oldNamecall
-            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-                pcall(function()
-                    if not checkcaller() then
-                        local method = getnamecallmethod()
-                        if self == Players.LocalPlayer and (method == "Kick" or method == "kick") then
-                            doRejoinCore("PlayerKickHook", false)
-                        end
-                    end
-                end)
-                return oldNamecall(self, ...)
-            end)
-        end
+        
+        task.wait(10)
+        isRejoining = false
     end)
 end
 
--- Обёртка для интерфейса
-local function doRejoin(reason, force)
-    if _G.LiteProjectDoRejoin then
-        return _G.LiteProjectDoRejoin(reason, force)
+-- Слушаем системные ошибки Roblox (Самый надежный метод для мобилок)
+GuiService.ErrorMessageChanged:Connect(function()
+    local err = GuiService.ErrorMessage
+    if err and err ~= "" then
+        doRejoin(false)
     end
-end
+end)
 
--- ============================================================
+-- Слушаем ошибки телепортации
+TeleportService.TeleportInitFailed:Connect(function(plr, result)
+    if plr == player then
+        doRejoin(false)
+    end
+end)
+
+saveServer() -- Сохраняем при запуске
+player.CharacterAdded:Connect(saveServer) -- Сохраняем при респавне
+
+task.spawn(function()
+    while task.wait(30) do
+        if _G.AutoRejoin then saveServer() end
+    end
+end)
+
 -- === БЕЗОПАСНЫЙ FPS ===
--- ============================================================
-
 local function updateFPS()
     pcall(function()
         if type(setfpscap) == "function" then
-            if _G.FPSLimitActive then
-                setfpscap(_G.CurrentFPS)
-            else
-                setfpscap(9999)
-            end
+            if _G.FPSLimitActive then setfpscap(_G.CurrentFPS) else setfpscap(9999) end
         end
     end)
 end
-
 updateFPS()
 
 -- ============================================================
 -- === ИНТЕРФЕЙС ===
 -- ============================================================
-
 local gui = Instance.new("ScreenGui")
 gui.Name = "LiteProjectUI"
 gui.ResetOnSpawn = false
@@ -526,47 +162,33 @@ mainCorner.CornerRadius = UDim.new(0, 8)
 
 local function makeDraggable(frame, onTap)
     local dragging, dragInput, dragStart, startPos, maxDist = false, nil, nil, nil, 0
-
     frame.InputBegan:Connect(function(input)
         if isDraggingSlider then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = UDim2.new(0, frame.AbsolutePosition.X, 0, frame.AbsolutePosition.Y)
-            maxDist = 0
+            dragging = true; dragStart = input.Position; startPos = UDim2.new(0, frame.AbsolutePosition.X, 0, frame.AbsolutePosition.Y); maxDist = 0
         end
     end)
-
     frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            dragInput = input
-        end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging and not isDraggingSlider then
             local delta = input.Position - dragStart
             if delta.Magnitude > maxDist then maxDist = delta.Magnitude end
             local vp = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1000, 1000)
             frame.AnchorPoint = Vector2.new(0, 0)
-            frame.Position = UDim2.new(
-                0, math.clamp(startPos.X.Offset + delta.X, 0, vp.X - frame.AbsoluteSize.X),
-                0, math.clamp(startPos.Y.Offset + delta.Y, 0, vp.Y - frame.AbsoluteSize.Y)
-            )
+            frame.Position = UDim2.new(0, math.clamp(startPos.X.Offset + delta.X, 0, vp.X - frame.AbsoluteSize.X), 0, math.clamp(startPos.Y.Offset + delta.Y, 0, vp.Y - frame.AbsoluteSize.Y))
         end
     end)
-
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             if dragging then
-                dragging = false
-                dragInput = nil
+                dragging = false; dragInput = nil
                 if maxDist < 10 and onTap then onTap() end
             end
         end
     end)
 end
-
 makeDraggable(mainFrame)
 
 local topBar = Instance.new("Frame", mainFrame)
@@ -661,7 +283,6 @@ local function createToggle(text, default, yPos, callback)
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
     local isOn = default
-
     toggleBg.MouseButton1Click:Connect(function()
         isOn = not isOn
         if isOn then
@@ -772,11 +393,13 @@ end
 
 local renderElements, playerElements, rejoinElements = {}, {}, {}
 
+-- Render
 table.insert(renderElements, createToggle("Ultra FPS Boost", false, 10, function(s) _G.FPSBoostActive = s end))
 table.insert(renderElements, createToggle("Auto Clear Memory", true, 50, function(s) _G.AutoCleanMemory = s end))
 table.insert(renderElements, createToggle("FPS Limit Enable", true, 90, function(s) _G.FPSLimitActive = s; updateFPS() end))
 table.insert(renderElements, createSlider("FPS Cap", 60, 130, function(v) _G.CurrentFPS = v; updateFPS() end))
 
+-- Player
 table.insert(playerElements, createButton("Teleport: Pine Tree", 10, function()
     pcall(function()
         if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
@@ -794,9 +417,9 @@ table.insert(playerElements, createButton("Teleport: Spawn", 60, function()
     end)
 end))
 
-table.insert(rejoinElements, createToggle("Auto Rejoin", true, 10, function(s) _G.AutoRejoin = s end))
-table.insert(rejoinElements, createToggle("Rejoin On Any Error", true, 50, function(s) _G.RejoinOnAnyError = s end))
-table.insert(rejoinElements, createButton("Force Rejoin Now", 100, function() doRejoin("ManualButton", true) end))
+-- Rejoin
+table.insert(rejoinElements, createToggle("Auto Rejoin (On Error)", true, 10, function(s) _G.AutoRejoin = s end))
+table.insert(rejoinElements, createButton("Force Rejoin Now", 60, function() doRejoin(true) end))
 
 for _, v in pairs(playerElements) do v.Visible = false end
 for _, v in pairs(rejoinElements) do v.Visible = false end
@@ -809,6 +432,7 @@ local function selectTab(act, inact1, inact2, showL, hideL1, hideL2)
     act.BackgroundColor3 = THEME.TabActiveBg; act.TextColor3 = THEME.Text
     inact1.BackgroundColor3 = THEME.Sidebar; inact1.TextColor3 = THEME.TextDim
     inact2.BackgroundColor3 = THEME.Sidebar; inact2.TextColor3 = THEME.TextDim
+    
     for _, v in pairs(showL) do v.Visible = true end
     for _, v in pairs(hideL1) do v.Visible = false end
     for _, v in pairs(hideL2) do v.Visible = false end
@@ -835,6 +459,7 @@ Instance.new("UICorner", openBtn).CornerRadius = UDim.new(1, 0)
 makeDraggable(openBtn, function() openBtn.Visible = false; mainFrame.Visible = true end)
 minimizeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false; openBtn.Visible = true end)
 
+-- === ФОНОВЫЕ ЦИКЛЫ ===
 task.spawn(function()
     while task.wait(45) do
         if _G.AutoCleanMemory then pcall(function() collectgarbage("collect") end) end
