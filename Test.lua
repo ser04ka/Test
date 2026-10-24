@@ -1,4 +1,5 @@
--- === Swarm Tweaker: Lite Project (Final Stable Rejoin) ===
+-- === Swarm Tweaker: Lite Project (MAX AGGRESSIVE REJOIN) ===
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
@@ -6,13 +7,28 @@ local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
+local LogService = game:GetService("LogService")
+local ScriptContext = game:GetService("ScriptContext")
 
 local player = Players.LocalPlayer
+while not player do
+    task.wait()
+    player = Players.LocalPlayer
+end
+
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- Очистка старых меню
-for _, name in ipairs({"LiteProjectUI", "LiteProjectMinGui", "SwarmTweakerPro", "SwarmMinButton", "SwarmTweaker"}) do
-    if playerGui:FindFirstChild(name) then playerGui[name]:Destroy() end
+for _, name in ipairs({
+    "LiteProjectUI",
+    "LiteProjectMinGui",
+    "SwarmTweakerPro",
+    "SwarmMinButton",
+    "SwarmTweaker"
+}) do
+    if playerGui:FindFirstChild(name) then
+        playerGui[name]:Destroy()
+    end
 end
 
 local THEME = {
@@ -35,106 +51,338 @@ _G.CurrentFPS = 60
 local isDraggingSlider = false
 
 -- ============================================================
--- === УЛУЧШЕННЫЙ И БЕЗОПАСНЫЙ АВТО-РЕДЖОИН ===
+-- === MAX AGGRESSIVE REJOIN (ALL METHODS) ===
 -- ============================================================
+
+if _G.AutoRejoin == nil then _G.AutoRejoin = true end
+
 local REJOIN_FILE = "LiteProject_Server.txt"
-local isRejoining = false
-local lastRejoinTime = 0
+local REJOIN_STATE = {busy = false, last = 0}
 
--- Сохраняем сервер в файл и в память
-local function saveServer()
+local function safeWrite(path, data)
     pcall(function()
-        _G.SavedPlaceId = game.PlaceId
-        _G.SavedJobId = game.JobId
-        if writefile and game.JobId ~= "" then
-            writefile(REJOIN_FILE, tostring(game.PlaceId) .. "|" .. game.JobId)
+        if type(writefile) == "function" then writefile(path, data) end
+    end)
+end
+
+local function safeRead(path)
+    local ok, result = pcall(function()
+        if type(readfile) == "function" and type(isfile) == "function" and isfile(path) then
+            return readfile(path)
+        end
+        return nil
+    end)
+    if ok then return result end
+    return nil
+end
+
+local function saveCurrentServer()
+    pcall(function()
+        local placeId = game.PlaceId
+        local jobId = game.JobId
+        if placeId and placeId > 0 and jobId and jobId ~= "" then
+            safeWrite(REJOIN_FILE, tostring(placeId) .. "|" .. tostring(jobId))
         end
     end)
 end
 
--- Получаем сохраненный сервер
-local function getSavedServer()
-    local pId, jId = nil, nil
-    pcall(function()
-        if isfile and readfile and isfile(REJOIN_FILE) then
-            local data = readfile(REJOIN_FILE)
-            local sep = string.find(data, "|")
-            if sep then
-                pId = tonumber(string.sub(data, 1, sep - 1))
-                jId = string.sub(data, sep + 1)
-            end
-        end
-    end)
-    -- Если файл не сработал, берем из памяти
-    if not pId then pId = _G.SavedPlaceId end
-    if not jId then jId = _G.SavedJobId end
-    return pId, jId
-end
+local function doRejoin(reason)
+    if not _G.AutoRejoin then return end
+    if REJOIN_STATE.busy then return end
+    if tick() - REJOIN_STATE.last < 3 then return end
 
--- Функция перезахода
-local function doRejoin(force)
-    if isRejoining then return end
-    if not force and not _G.AutoRejoin then return end
-    if tick() - lastRejoinTime < 15 then return end -- Защита от спама (чтобы не было 273)
-    
-    isRejoining = true
-    lastRejoinTime = tick()
-    
+    REJOIN_STATE.busy = true
+    REJOIN_STATE.last = tick()
+
     task.spawn(function()
-        local pId, jId = getSavedServer()
-        local targetPlace = pId or game.PlaceId
-        
-        -- Пытаемся перезайти
+        for attempt = 1, 10 do
+            if not _G.AutoRejoin then break end
+
+            saveCurrentServer()
+
+            local data = safeRead(REJOIN_FILE)
+            local placeId = game.PlaceId
+            local jobId = game.JobId
+
+            if data then
+                local sep = string.find(data, "|")
+                if sep then
+                    placeId = tonumber(string.sub(data, 1, sep - 1)) or placeId
+                    jobId = string.sub(data, sep + 1) or jobId
+                end
+            end
+
+            if placeId and placeId > 0 then
+                local ok = pcall(function()
+                    if jobId and jobId ~= "" then
+                        TeleportService:TeleportToPlaceInstance(placeId, jobId, player)
+                    else
+                        TeleportService:Teleport(placeId, player)
+                    end
+                end)
+
+                if ok then
+                    task.wait(3)
+                    break
+                end
+            end
+
+            task.wait(2)
+        end
+
+        task.delay(5, function()
+            REJOIN_STATE.busy = false
+        end)
+    end)
+end
+
+-- Сохранение сервера
+saveCurrentServer()
+task.spawn(function()
+    while task.wait(5) do
+        if _G.AutoRejoin then saveCurrentServer() end
+    end
+end)
+
+pcall(function()
+    player.CharacterAdded:Connect(function() saveCurrentServer() end)
+end)
+
+-- ============================================================
+-- === МЕТОД 1: GuiService.ErrorMessageChanged ===
+-- ============================================================
+pcall(function()
+    GuiService.ErrorMessageChanged:Connect(function()
         pcall(function()
-            if jId and jId ~= "" then
-                TeleportService:TeleportToPlaceInstance(targetPlace, jId, player)
-            else
-                TeleportService:Teleport(targetPlace, player)
+            local msg = GuiService.ErrorMessage
+            if msg and msg ~= "" then
+                doRejoin("GuiErrorMessage")
             end
         end)
-        
-        task.wait(10)
-        isRejoining = false
     end)
-end
+end)
 
--- Слушаем системные ошибки Roblox (Самый надежный метод для мобилок)
-GuiService.ErrorMessageChanged:Connect(function()
-    local err = GuiService.ErrorMessage
-    if err and err ~= "" then
-        doRejoin(false)
+pcall(function()
+    local msg = GuiService.ErrorMessage
+    if msg and msg ~= "" then
+        task.wait(2)
+        doRejoin("GuiErrorMessageInitial")
     end
 end)
 
--- Слушаем ошибки телепортации
-TeleportService.TeleportInitFailed:Connect(function(plr, result)
-    if plr == player then
-        doRejoin(false)
-    end
+-- ============================================================
+-- === МЕТОД 2: TeleportService.ErrorMessage ===
+-- ============================================================
+pcall(function()
+    TeleportService.ErrorMessage:Connect(function(msg)
+        pcall(function()
+            doRejoin("TeleportErrorMessage")
+        end)
+    end)
 end)
 
-saveServer() -- Сохраняем при запуске
-player.CharacterAdded:Connect(saveServer) -- Сохраняем при респавне
+-- ============================================================
+-- === МЕТОД 3: TeleportInitFailed ===
+-- ============================================================
+pcall(function()
+    TeleportService.TeleportInitFailed:Connect(function(targetPlayer, result)
+        pcall(function()
+            if targetPlayer == player then
+                doRejoin("TeleportInitFailed")
+            end
+        end)
+    end)
+end)
 
+-- ============================================================
+-- === МЕТОД 4: LogService.MessageOut ===
+-- ============================================================
+pcall(function()
+    LogService.MessageOut:Connect(function(message, messageType)
+        pcall(function()
+            if messageType == Enum.MessageType.MessageError then
+                doRejoin("LogServiceError")
+            end
+        end)
+    end)
+end)
+
+-- ============================================================
+-- === МЕТОД 5: ScriptContext.Error ===
+-- ============================================================
+pcall(function()
+    ScriptContext.Error:Connect(function(message)
+        pcall(function()
+            doRejoin("ScriptContextError")
+        end)
+    end)
+end)
+
+-- ============================================================
+-- === МЕТОД 6: Players.PlayerDisconnecting ===
+-- ============================================================
+pcall(function()
+    Players.PlayerDisconnecting:Connect(function(plr)
+        pcall(function()
+            if plr == player then
+                doRejoin("PlayerDisconnecting")
+            end
+        end)
+    end)
+end)
+
+-- ============================================================
+-- === МЕТОД 7: NetworkClient.ClientDisconnected ===
+-- ============================================================
+pcall(function()
+    local NetworkClient = game:GetService("NetworkClient")
+    NetworkClient.ClientDisconnected:Connect(function(msg)
+        pcall(function()
+            doRejoin("NetworkClientDisconnected")
+        end)
+    end)
+end)
+
+-- ============================================================
+-- === МЕТОД 8: Мониторинг CoreGui через gethui() ===
+-- ============================================================
 task.spawn(function()
-    while task.wait(30) do
-        if _G.AutoRejoin then saveServer() end
+    while task.wait(0.5) do
+        pcall(function()
+            if not _G.AutoRejoin then return end
+
+            -- Пробуем разные способы получить CoreGui
+            local coreGui = nil
+
+            pcall(function()
+                if gethui then
+                    coreGui = gethui()
+                end
+            end)
+
+            if not coreGui then
+                pcall(function()
+                    coreGui = game:GetService("CoreGui")
+                end)
+            end
+
+            if coreGui then
+                -- Ищем элементы с текстом ошибки
+                for _, descendant in ipairs(coreGui:GetDescendants()) do
+                    if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+                        local text = descendant.Text or ""
+                        if text ~= "" then
+                            local lower = string.lower(text)
+                            if lower:find("error", 1, true)
+                                or lower:find("disconnect", 1, true)
+                                or lower:find("kicked", 1, true)
+                                or lower:find("failed", 1, true) then
+                                doRejoin("CoreGuiTextError")
+                                return
+                            end
+                        end
+                    end
+                end
+            end
+        end)
     end
 end)
 
--- === БЕЗОПАСНЫЙ FPS ===
-local function updateFPS()
+-- ============================================================
+-- === МЕТОД 9: Watchdog DistributedGameTime ===
+-- ============================================================
+task.spawn(function()
+    local lastDistributed = nil
+    local lastGood = tick()
+
     pcall(function()
-        if type(setfpscap) == "function" then
-            if _G.FPSLimitActive then setfpscap(_G.CurrentFPS) else setfpscap(9999) end
+        lastDistributed = Workspace.DistributedGameTime
+    end)
+
+    while task.wait(3) do
+        if _G.AutoRejoin then
+            local ok, current = pcall(function()
+                return Workspace.DistributedGameTime
+            end)
+
+            if ok and current ~= lastDistributed then
+                lastDistributed = current
+                lastGood = tick()
+            elseif tick() - lastGood > 20 then
+                doRejoin("WatchdogTimeout")
+                lastGood = tick()
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- === МЕТОД 10: Хук Kick через метатаблицу ===
+-- ============================================================
+pcall(function()
+    if hookmetamethod and getnamecallmethod and checkcaller then
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            pcall(function()
+                if not checkcaller() then
+                    local method = getnamecallmethod()
+                    if self == player and (method == "Kick" or method == "kick") then
+                        doRejoin("KickHook")
+                    end
+                end
+            end)
+            return oldNamecall(self, ...)
+        end)
+    end
+end)
+
+-- ============================================================
+-- === МЕТОД 11: Прямой мониторинг через RenderStepped ===
+-- ============================================================
+task.spawn(function()
+    local lastCheck = tick()
+    
+    game:GetService("RunService").RenderStepped:Connect(function()
+        if tick() - lastCheck >= 1 then
+            lastCheck = tick()
+            
+            pcall(function()
+                if not _G.AutoRejoin then return end
+                
+                -- Проверяем, жив ли игрок
+                if not player or not player.Parent then
+                    doRejoin("PlayerRemoved")
+                    return
+                end
+                
+                -- Проверяем, жив ли персонаж (если должен быть)
+                if player.Character and not player.Character.Parent then
+                    doRejoin("CharacterRemoved")
+                    return
+                end
+            end)
         end
     end)
-end
-updateFPS()
+end)
 
 -- ============================================================
 -- === ИНТЕРФЕЙС ===
 -- ============================================================
+
+local function updateFPS()
+    pcall(function()
+        if type(setfpscap) == "function" then
+            if _G.FPSLimitActive then
+                setfpscap(_G.CurrentFPS)
+            else
+                setfpscap(9999)
+            end
+        end
+    end)
+end
+
+updateFPS()
+
 local gui = Instance.new("ScreenGui")
 gui.Name = "LiteProjectUI"
 gui.ResetOnSpawn = false
@@ -162,33 +410,47 @@ mainCorner.CornerRadius = UDim.new(0, 8)
 
 local function makeDraggable(frame, onTap)
     local dragging, dragInput, dragStart, startPos, maxDist = false, nil, nil, nil, 0
+
     frame.InputBegan:Connect(function(input)
         if isDraggingSlider then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = input.Position; startPos = UDim2.new(0, frame.AbsolutePosition.X, 0, frame.AbsolutePosition.Y); maxDist = 0
+            dragging = true
+            dragStart = input.Position
+            startPos = UDim2.new(0, frame.AbsolutePosition.X, 0, frame.AbsolutePosition.Y)
+            maxDist = 0
         end
     end)
+
     frame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
     end)
+
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging and not isDraggingSlider then
             local delta = input.Position - dragStart
             if delta.Magnitude > maxDist then maxDist = delta.Magnitude end
             local vp = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1000, 1000)
             frame.AnchorPoint = Vector2.new(0, 0)
-            frame.Position = UDim2.new(0, math.clamp(startPos.X.Offset + delta.X, 0, vp.X - frame.AbsoluteSize.X), 0, math.clamp(startPos.Y.Offset + delta.Y, 0, vp.Y - frame.AbsoluteSize.Y))
+            frame.Position = UDim2.new(
+                0, math.clamp(startPos.X.Offset + delta.X, 0, vp.X - frame.AbsoluteSize.X),
+                0, math.clamp(startPos.Y.Offset + delta.Y, 0, vp.Y - frame.AbsoluteSize.Y)
+            )
         end
     end)
+
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             if dragging then
-                dragging = false; dragInput = nil
+                dragging = false
+                dragInput = nil
                 if maxDist < 10 and onTap then onTap() end
             end
         end
     end)
 end
+
 makeDraggable(mainFrame)
 
 local topBar = Instance.new("Frame", mainFrame)
@@ -283,6 +545,7 @@ local function createToggle(text, default, yPos, callback)
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
     local isOn = default
+
     toggleBg.MouseButton1Click:Connect(function()
         isOn = not isOn
         if isOn then
@@ -393,13 +656,11 @@ end
 
 local renderElements, playerElements, rejoinElements = {}, {}, {}
 
--- Render
 table.insert(renderElements, createToggle("Ultra FPS Boost", false, 10, function(s) _G.FPSBoostActive = s end))
 table.insert(renderElements, createToggle("Auto Clear Memory", true, 50, function(s) _G.AutoCleanMemory = s end))
 table.insert(renderElements, createToggle("FPS Limit Enable", true, 90, function(s) _G.FPSLimitActive = s; updateFPS() end))
 table.insert(renderElements, createSlider("FPS Cap", 60, 130, function(v) _G.CurrentFPS = v; updateFPS() end))
 
--- Player
 table.insert(playerElements, createButton("Teleport: Pine Tree", 10, function()
     pcall(function()
         if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
@@ -417,9 +678,9 @@ table.insert(playerElements, createButton("Teleport: Spawn", 60, function()
     end)
 end))
 
--- Rejoin
-table.insert(rejoinElements, createToggle("Auto Rejoin (On Error)", true, 10, function(s) _G.AutoRejoin = s end))
-table.insert(rejoinElements, createButton("Force Rejoin Now", 60, function() doRejoin(true) end))
+table.insert(rejoinElements, createToggle("Auto Rejoin", true, 10, function(s) _G.AutoRejoin = s end))
+table.insert(rejoinElements, createButton("Force Rejoin Now", 60, function() doRejoin("ManualButton") end))
+table.insert(rejoinElements, createButton("Save Server Now", 110, function() saveCurrentServer() end))
 
 for _, v in pairs(playerElements) do v.Visible = false end
 for _, v in pairs(rejoinElements) do v.Visible = false end
@@ -432,7 +693,6 @@ local function selectTab(act, inact1, inact2, showL, hideL1, hideL2)
     act.BackgroundColor3 = THEME.TabActiveBg; act.TextColor3 = THEME.Text
     inact1.BackgroundColor3 = THEME.Sidebar; inact1.TextColor3 = THEME.TextDim
     inact2.BackgroundColor3 = THEME.Sidebar; inact2.TextColor3 = THEME.TextDim
-    
     for _, v in pairs(showL) do v.Visible = true end
     for _, v in pairs(hideL1) do v.Visible = false end
     for _, v in pairs(hideL2) do v.Visible = false end
@@ -459,7 +719,6 @@ Instance.new("UICorner", openBtn).CornerRadius = UDim.new(1, 0)
 makeDraggable(openBtn, function() openBtn.Visible = false; mainFrame.Visible = true end)
 minimizeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false; openBtn.Visible = true end)
 
--- === ФОНОВЫЕ ЦИКЛЫ ===
 task.spawn(function()
     while task.wait(45) do
         if _G.AutoCleanMemory then pcall(function() collectgarbage("collect") end) end
