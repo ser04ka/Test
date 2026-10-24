@@ -1,6 +1,6 @@
 local SRC = [==[
 -- ============================================================
--- === Swarm Tweaker: Lite Project v3 (FULL, SAFE REJOIN) ===
+-- === Swarm Tweaker: Lite Project v5 (FULL, SAFE REJOIN) ===
 -- RightShift - скрыть/показать меню
 -- ============================================================
 
@@ -71,8 +71,11 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 3,
+    V = 4,
     FPSBoost = true,
+    HideBees = true,
+    HideTokens = true,
+    HideDecor = true,
     AutoClean = true,
     FPSLimit = true,
     FPS = 60,
@@ -429,7 +432,12 @@ local boost = {
     quality = nil,
     conn = nil,
     token = 0,
-    restoring = false
+    restoring = false,
+    hide = setmetatable({}, { __mode = "k" }),
+    names = {},
+    dnames = {},
+    deleted = 0,
+    underY = nil
 }
 
 local FX_CLASSES = {
@@ -459,8 +467,219 @@ local function inCharacter(obj)
     return model ~= nil and Players:GetPlayerFromCharacter(model) ~= nil
 end
 
+-- Правила скрытия по названиям объектов (подстроки в нижнем регистре).
+-- Объекты НЕ удаляются, а скрываются (Transparency = 1) - это безопасно:
+-- токены остаются собираемыми, ничего не ломается, а при выключении всё возвращается.
+local HIDE_RULES = {
+    { flag = "HideBees", include = { "bee" },
+      exclude = { "bear", "honey", "hive", "shop", "store", "spawn" } },
+    { flag = "HideTokens", include = { "collectible" }, exclude = {} },
+    { flag = "HideDecor",
+      include = {
+          "bubble", "particle", "tree", "cactus", "pumpkin", "strawberr", "clover",
+          "web", "bush", "bamboo", "pineapple", "pepper", "sunflower", "coconut",
+          "palm", "rose", "frog", "fence", "flower", "grass"
+      },
+      exclude = { "crab" } }
+}
+local SKIP_NAMES = {
+    part = true, meshpart = true, union = true, model = true,
+    folder = true, handle = true, mesh = true
+}
+
+local function nameHidesRaw(name)
+    local n = string.lower(name)
+    if SKIP_NAMES[n] then return false end
+    for _, rule in ipairs(HIDE_RULES) do
+        if Config[rule.flag] then
+            local blocked = false
+            for _, x in ipairs(rule.exclude) do
+                if n:find(x, 1, true) then
+                    blocked = true
+                    break
+                end
+            end
+            if not blocked then
+                for _, k in ipairs(rule.include) do
+                    if n:find(k, 1, true) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function nameHides(name)
+    local c = boost.names[name]
+    if c == nil then
+        c = nameHidesRaw(name)
+        boost.names[name] = c
+    end
+    return c
+end
+
+-- true, если сам объект или любой его родитель подходит под правила
+-- (персонажи игроков никогда не скрываются). Результаты кэшируются.
+local function hiddenByName(inst)
+    local cache = boost.hide
+    local chain, hit, n = {}, {}, 0
+    local base, isChar = false, false
+    local cur = inst
+
+    while cur and cur ~= Workspace do
+        local c = cache[cur]
+        if c ~= nil then
+            if c == "char" then isChar = true else base = c end
+            break
+        end
+        if cur:IsA("Model") and Players:GetPlayerFromCharacter(cur) then
+            cache[cur] = "char"
+            isChar = true
+            break
+        end
+        n = n + 1
+        chain[n] = cur
+        hit[n] = nameHides(cur.Name)
+        cur = cur.Parent
+    end
+
+    local val = (not isChar) and base or false
+    for i = n, 1, -1 do
+        if isChar then
+            val = false
+        else
+            val = val or hit[i]
+        end
+        cache[chain[i]] = val
+    end
+    return val
+end
+
+-- Всё, что целиком находится глубоко под картой
+local function computeUnderY()
+    local zones = Workspace:FindFirstChild("FlowerZones")
+    if not zones then return nil end
+    local minY = nil
+    for _, z in ipairs(zones:GetChildren()) do
+        if z:IsA("BasePart") then
+            local y = z.Position.Y
+            if minY == nil or y < minY then minY = y end
+        end
+    end
+    if minY then return minY - 60 end
+    return nil
+end
+
+local function underMap(part)
+    local y = boost.underY
+    if not y then return false end
+    local ok, res = pcall(function()
+        return part.Position.Y + part.Size.Y * 0.5 < y
+    end)
+    return ok and res and not inCharacter(part)
+end
+
+-- ============================================================
+-- Реальное УДАЛЕНИЕ декора (деревья, кусты, цветы, заборы и т.д.)
+-- Удалённое возвращается только после перезахода на сервер.
+-- ============================================================
+local DELETE_KEYS = {
+    "tree", "cactus", "pumpkin", "strawberr", "clover", "web", "bush", "bamboo",
+    "pineapple", "pepper", "sunflower", "coconut", "palm", "rose", "frog",
+    "fence", "flower", "grass"
+}
+local DELETE_EXCLUDE = { "crab", "zone", "street" }
+
+-- Контейнеры, внутри которых ничего не удаляем (игровая логика)
+local PROTECTED_ANCESTORS = {
+    "FlowerZones", "Collectibles", "Particles", "Honeycombs", "NPCs", "Monsters", "MonsterSpawners"
+}
+
+local function decorNameMatches(name)
+    local c = boost.dnames[name]
+    if c ~= nil then return c end
+
+    local n = string.lower(name)
+    local res = false
+    if not SKIP_NAMES[n] then
+        local blocked = false
+        for _, x in ipairs(DELETE_EXCLUDE) do
+            if n:find(x, 1, true) then
+                blocked = true
+                break
+            end
+        end
+        if not blocked then
+            for _, k in ipairs(DELETE_KEYS) do
+                if n:find(k, 1, true) then
+                    res = true
+                    break
+                end
+            end
+        end
+    end
+    boost.dnames[name] = res
+    return res
+end
+
+local function isProtected(obj)
+    for _, name in ipairs(PROTECTED_ANCESTORS) do
+        if obj.Name == name or obj:FindFirstAncestor(name) then return true end
+    end
+    if Players:GetPlayerFromCharacter(obj) or inCharacter(obj) then return true end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        local c = pl.Character
+        if c and (obj == c or obj:IsAncestorOf(c)) then return true end
+    end
+    -- NPC, монстры и всё, где есть Humanoid
+    if obj:IsA("Model") or obj:IsA("Folder") then
+        if obj:FindFirstChildWhichIsA("Humanoid", true) then return true end
+    end
+    return false
+end
+
+-- Большие твёрдые части (земля поля) не удаляем, чтобы не провалиться под карту
+local function isFloorPart(p)
+    return p.CanCollide and math.max(p.Size.X, p.Size.Z) >= 25
+end
+
+local function safeToDestroy(obj)
+    if obj:IsA("BasePart") then
+        return not isFloorPart(obj)
+    end
+    for _, d in ipairs(obj:GetDescendants()) do
+        if d:IsA("BasePart") and isFloorPart(d) then return false end
+    end
+    return true
+end
+
+-- true = объект удалён (или уже удалён) и дальше его обрабатывать не нужно
+local function decorDelete(obj)
+    if not obj.Parent then return true end
+    if not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Folder")) then return false end
+
+    local parent = obj.Parent
+    local matched = decorNameMatches(obj.Name)
+
+    -- содержимое верхнеуровневой папки вроде "Flowers" удаляем, саму папку оставляем
+    if not matched and parent and parent.Parent == Workspace and parent:IsA("Folder")
+        and decorNameMatches(parent.Name) then
+        matched = true
+    end
+    if not matched then return false end
+    if obj:IsA("Folder") and parent == Workspace then return false end
+
+    if isProtected(obj) or not safeToDestroy(obj) then return false end
+
+    boost.deleted = boost.deleted + 1
+    obj:Destroy()
+    return true
+end
+
 local function processObj(obj)
     if obj:IsA("Terrain") then return end
+
+    if Config.HideDecor and decorDelete(obj) then return end
 
     if obj:IsA("BasePart") then
         local s = boost.parts[obj]
@@ -476,6 +695,11 @@ local function processObj(obj)
             s[4] = obj.TextureID
             obj.TextureID = ""
         end
+
+        if hiddenByName(obj) or (Config.HideDecor and underMap(obj)) then
+            if s[5] == nil then s[5] = obj.Transparency end
+            obj.Transparency = 1
+        end
     elseif FX_CLASSES[obj.ClassName] then
         if boost.fx[obj] == nil then boost.fx[obj] = { "Enabled", obj.Enabled } end
         obj.Enabled = false
@@ -483,6 +707,11 @@ local function processObj(obj)
         if boost.fx[obj] == nil and not inCharacter(obj) then
             boost.fx[obj] = { "Transparency", obj.Transparency }
             obj.Transparency = 1
+        end
+    elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
+        if boost.fx[obj] == nil and hiddenByName(obj) then
+            boost.fx[obj] = { "Enabled", obj.Enabled }
+            obj.Enabled = false
         end
     end
 end
@@ -492,6 +721,10 @@ local function applyBoost()
 
     boost.token = boost.token + 1
     local token = boost.token
+
+    boost.hide = setmetatable({}, { __mode = "k" })
+    boost.names, boost.dnames = {}, {}
+    boost.underY = computeUnderY()
 
     if not boost.light then
         boost.light = {}
@@ -575,6 +808,8 @@ end
 local function restoreBoost()
     boost.token = boost.token + 1
     boost.restoring = true
+    boost.hide = setmetatable({}, { __mode = "k" })
+    boost.names, boost.dnames = {}, {}
 
     if boost.conn then
         boost.conn:Disconnect()
@@ -615,6 +850,7 @@ local function restoreBoost()
                     part.Reflectance = s[2]
                     part.CastShadow = s[3]
                     if s[4] ~= nil then part.TextureID = s[4] end
+                    if s[5] ~= nil then part.Transparency = s[5] end
                 end)
             end
             boost.parts[part] = nil
@@ -1238,9 +1474,27 @@ end
 -- RENDER
 local renderPage = createTab("Render", 1)
 addSection(renderPage, "Performance")
-addToggle(renderPage, "Ultra FPS Boost", "FPSBoost", "Без текстур, теней, света и частиц", function(on)
+addToggle(renderPage, "FPS Boost", "FPSBoost", "Лёгкая графика: без текстур, теней, света, частиц", function(on)
     if on then applyBoost() else restoreBoost() end
-    notify(on and "FPS Boost: ON" or "FPS Boost: OFF (restoring)")
+    if on then
+        notify("FPS Boost: ON")
+    elseif boost.deleted > 0 then
+        notify("FPS Boost: OFF (удалённый декор вернётся после перезахода)")
+    else
+        notify("FPS Boost: OFF")
+    end
+end)
+addSection(renderPage, "What to hide (with FPS Boost)")
+local function reapplyHide()
+    if Config.FPSBoost then restoreBoost() end -- восстановит и сразу применит заново
+end
+addToggle(renderPage, "Hide Bees", "HideBees", "Все пчёлы, включая декоративных", reapplyHide)
+addToggle(renderPage, "Hide Tokens", "HideTokens", "Токены невидимы, но собираются", reapplyHide)
+addToggle(renderPage, "Delete Map Decor", "HideDecor", "Удаляет деревья, кусты, цветы, заборы (до перезахода)", function(on)
+    reapplyHide()
+    if not on and boost.deleted > 0 then
+        notify("Удалённое вернётся после перезахода")
+    end
 end)
 addToggle(renderPage, "Auto Clear Memory", "AutoClean", "Очистка мусора каждые 45 сек")
 addSection(renderPage, "Frame rate")
@@ -1371,12 +1625,40 @@ end)
 -- INFO
 local infoPage = createTab("Info", 4)
 addSection(infoPage, "About")
-addLabel(infoPage, "Swarm Tweaker: Lite Project v3\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
+addLabel(infoPage, "Swarm Tweaker: Lite Project v5\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
 addSection(infoPage, "Control")
 addButton(infoPage, "Save Config Now", function()
     safeWrite(CONFIG_FILE, HttpService:JSONEncode(Config))
     notify("Config saved")
 end)
+local function dumpStructure()
+    local out = {}
+    for _, c in ipairs(Workspace:GetChildren()) do
+        if not (c:IsA("Terrain") or c:IsA("Camera")) and not Players:GetPlayerFromCharacter(c) then
+            local kids = c:GetChildren()
+            out[#out + 1] = c.ClassName .. ": " .. c.Name .. " (" .. #kids .. ")"
+            local seen, shown = {}, 0
+            for _, k in ipairs(kids) do
+                if not seen[k.Name] and shown < 12 then
+                    seen[k.Name] = true
+                    shown = shown + 1
+                    out[#out + 1] = "    - " .. k.ClassName .. ": " .. k.Name
+                end
+            end
+        end
+    end
+    local text = table.concat(out, "\n")
+    if #text > 15000 then text = text:sub(1, 15000) end
+    if type(setclipboard) == "function" then
+        setclipboard(text)
+        notify("Workspace structure copied")
+    else
+        notify("setclipboard not supported")
+    end
+end
+
+addSection(infoPage, "Debug")
+addButton(infoPage, "Copy Workspace Structure", dumpStructure)
 addButton(infoPage, "Unload Script", function()
     if _G.LiteProjectUnload then _G.LiteProjectUnload() end
 end, true)
@@ -1414,7 +1696,7 @@ task.defer(function()
     notify("Lite Project loaded - RightShift to toggle")
 end)
 
-print("[Swarm Tweaker Lite v3] loaded. RightShift - hide/show menu.")
+print("[Swarm Tweaker Lite v5] loaded. RightShift - hide/show menu.")
 
 ]==]
 pcall(function() writefile("LiteProject.lua", SRC) end)
