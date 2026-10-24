@@ -1,6 +1,6 @@
 local SRC = [==[
 -- ============================================================
--- === Swarm Tweaker: Lite Project v2 (FULL, SAFE REJOIN) ===
+-- === Swarm Tweaker: Lite Project v3 (FULL, SAFE REJOIN) ===
 -- RightShift - скрыть/показать меню
 -- ============================================================
 
@@ -18,6 +18,7 @@ local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 while not player do
@@ -70,8 +71,8 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    FPSBoost = false,
-    RemoveTextures = false,
+    V = 3,
+    FPSBoost = true,
     AutoClean = true,
     FPSLimit = true,
     FPS = 60,
@@ -101,9 +102,12 @@ do
     if raw then
         pcall(function()
             local data = HttpService:JSONDecode(raw)
-            for k, v in pairs(data) do
-                if Config[k] ~= nil and type(v) == type(Config[k]) then
-                    Config[k] = v
+            -- настройки старых версий игнорируем (чтобы применились новые значения по умолчанию)
+            if data.V == Config.V then
+                for k, v in pairs(data) do
+                    if Config[k] ~= nil and type(v) == type(Config[k]) then
+                        Config[k] = v
+                    end
                 end
             end
         end)
@@ -132,7 +136,10 @@ local THEME = {
     ElementBg = Color3.fromRGB(30, 30, 35),
     TabActiveBg = Color3.fromRGB(40, 40, 45),
     ToggleOff = Color3.fromRGB(45, 45, 50),
-    Danger = Color3.fromRGB(190, 60, 75)
+    Danger = Color3.fromRGB(190, 60, 75),
+    Good = Color3.fromRGB(110, 220, 130),
+    Warn = Color3.fromRGB(240, 200, 90),
+    Bad = Color3.fromRGB(240, 100, 100)
 }
 
 local isDraggingSlider = false
@@ -427,8 +434,21 @@ local boost = {
 
 local FX_CLASSES = {
     ParticleEmitter = true, Trail = true, Beam = true,
-    Smoke = true, Fire = true, Sparkles = true
+    Smoke = true, Fire = true, Sparkles = true,
+    PointLight = true, SpotLight = true, SurfaceLight = true,
+    Clouds = true, Highlight = true
 }
+
+-- Нарезка работы по времени: не фризит даже слабое устройство
+local function newSlicer()
+    local t0 = os.clock()
+    return function()
+        if os.clock() - t0 > 0.006 then
+            task.wait()
+            t0 = os.clock()
+        end
+    end
+end
 local POST_CLASSES = {
     BlurEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
     BloomEffect = true, DepthOfFieldEffect = true
@@ -452,14 +472,14 @@ local function processObj(obj)
         obj.Reflectance = 0
         obj.Material = Enum.Material.Plastic
 
-        if Config.RemoveTextures and s[4] == nil and obj:IsA("MeshPart") and not inCharacter(obj) then
+        if s[4] == nil and obj:IsA("MeshPart") and not inCharacter(obj) then
             s[4] = obj.TextureID
             obj.TextureID = ""
         end
     elseif FX_CLASSES[obj.ClassName] then
         if boost.fx[obj] == nil then boost.fx[obj] = { "Enabled", obj.Enabled } end
         obj.Enabled = false
-    elseif Config.RemoveTextures and (obj:IsA("Decal") or obj:IsA("Texture")) then
+    elseif obj:IsA("Decal") or obj:IsA("Texture") then
         if boost.fx[obj] == nil and not inCharacter(obj) then
             boost.fx[obj] = { "Transparency", obj.Transparency }
             obj.Transparency = 1
@@ -474,10 +494,17 @@ local function applyBoost()
     local token = boost.token
 
     if not boost.light then
-        boost.light = {
-            GlobalShadows = Lighting.GlobalShadows,
-            FogEnd = Lighting.FogEnd
-        }
+        boost.light = {}
+        pcall(function()
+            boost.light.GlobalShadows = Lighting.GlobalShadows
+            boost.light.FogEnd = Lighting.FogEnd
+            boost.light.ShadowSoftness = Lighting.ShadowSoftness
+        end)
+        pcall(function()
+            local t = Workspace.Terrain
+            boost.light.Water = { t.WaterWaveSize, t.WaterWaveSpeed, t.WaterReflectance }
+        end)
+        pcall(function() boost.light.Decoration = Workspace.Terrain.Decoration end)
         pcall(function() boost.quality = settings().Rendering.QualityLevel end)
     end
 
@@ -485,7 +512,15 @@ local function applyBoost()
     pcall(function()
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 9e9
+        Lighting.ShadowSoftness = 0
     end)
+    pcall(function()
+        local t = Workspace.Terrain
+        t.WaterWaveSize = 0
+        t.WaterWaveSpeed = 0
+        t.WaterReflectance = 0
+    end)
+    pcall(function() Workspace.Terrain.Decoration = false end)
 
     for _, v in ipairs(Lighting:GetDescendants()) do
         pcall(function()
@@ -501,19 +536,38 @@ local function applyBoost()
 
     -- Обработка карты кусками, чтобы не фризить слабое устройство
     task.spawn(function()
-        local n = 0
+        local step = newSlicer()
         for _, v in ipairs(Workspace:GetDescendants()) do
             if not alive or boost.token ~= token or not Config.FPSBoost then return end
             pcall(processObj, v)
-            n = n + 1
-            if n % 300 == 0 then task.wait() end
+            step()
         end
     end)
 
     if boost.conn then boost.conn:Disconnect() end
+
+    local queue, qh, qt = {}, 1, 0
     boost.conn = Workspace.DescendantAdded:Connect(function(v)
-        if Config.FPSBoost then
-            task.defer(function() pcall(processObj, v) end)
+        qt = qt + 1
+        queue[qt] = v
+    end)
+
+    -- один воркер обрабатывает новые объекты (токены, частицы) в рамках бюджета времени
+    task.spawn(function()
+        while alive and boost.token == token and Config.FPSBoost do
+            local t0 = os.clock()
+            while qh <= qt and os.clock() - t0 < 0.004 do
+                local v = queue[qh]
+                queue[qh] = nil
+                qh = qh + 1
+                if v and v.Parent then pcall(processObj, v) end
+            end
+            if qh > qt then
+                qh, qt = 1, 0
+                task.wait(0.25)
+            else
+                task.wait()
+            end
         end
     end)
 end
@@ -528,9 +582,22 @@ local function restoreBoost()
     end
 
     if boost.light then
+        local l = boost.light
         pcall(function()
-            Lighting.GlobalShadows = boost.light.GlobalShadows
-            Lighting.FogEnd = boost.light.FogEnd
+            if l.GlobalShadows ~= nil then Lighting.GlobalShadows = l.GlobalShadows end
+            if l.FogEnd ~= nil then Lighting.FogEnd = l.FogEnd end
+            if l.ShadowSoftness ~= nil then Lighting.ShadowSoftness = l.ShadowSoftness end
+        end)
+        pcall(function()
+            local t = Workspace.Terrain
+            if l.Water then
+                t.WaterWaveSize = l.Water[1]
+                t.WaterWaveSpeed = l.Water[2]
+                t.WaterReflectance = l.Water[3]
+            end
+        end)
+        pcall(function()
+            if l.Decoration ~= nil then Workspace.Terrain.Decoration = l.Decoration end
         end)
         boost.light = nil
     end
@@ -540,7 +607,7 @@ local function restoreBoost()
     boost.quality = nil
 
     task.spawn(function()
-        local n = 0
+        local step = newSlicer()
         for part, s in pairs(boost.parts) do
             if part and part.Parent then
                 pcall(function()
@@ -551,8 +618,7 @@ local function restoreBoost()
                 end)
             end
             boost.parts[part] = nil
-            n = n + 1
-            if n % 300 == 0 then task.wait() end
+            step()
         end
 
         for obj, s in pairs(boost.fx) do
@@ -560,8 +626,7 @@ local function restoreBoost()
                 pcall(function() obj[s[1]] = s[2] end)
             end
             boost.fx[obj] = nil
-            n = n + 1
-            if n % 300 == 0 then task.wait() end
+            step()
         end
 
         boost.restoring = false
@@ -708,12 +773,17 @@ end
 -- Верхняя панель
 local topBar = mk("Frame", {
     Size = UDim2.new(1, 0, 0, 44),
-    BackgroundTransparency = 1
+    BackgroundColor3 = THEME.Sidebar,
+    BorderSizePixel = 0
 }, main)
+mk("UIGradient", {
+    Color = ColorSequence.new(Color3.fromRGB(14, 14, 16), Color3.fromRGB(52, 26, 60)),
+    Rotation = 0
+}, topBar)
 
 mk("TextLabel", {
-    Size = UDim2.new(1, -100, 1, 0),
-    Position = UDim2.fromOffset(18, 0),
+    Size = UDim2.new(1, -200, 0, 20),
+    Position = UDim2.fromOffset(18, 5),
     BackgroundTransparency = 1,
     Text = "★ Lite Project",
     TextColor3 = THEME.Text,
@@ -721,6 +791,52 @@ mk("TextLabel", {
     TextSize = 15,
     TextXAlignment = Enum.TextXAlignment.Left
 }, topBar)
+
+mk("TextLabel", {
+    Size = UDim2.new(1, -200, 0, 14),
+    Position = UDim2.fromOffset(18, 25),
+    BackgroundTransparency = 1,
+    Text = "Made for low-end devices",
+    TextColor3 = THEME.TextDim,
+    Font = Enum.Font.Gotham,
+    TextSize = 11,
+    TextXAlignment = Enum.TextXAlignment.Left
+}, topBar)
+
+-- Живой счётчик FPS
+local fpsPill = mk("Frame", {
+    Size = UDim2.fromOffset(74, 24),
+    Position = UDim2.new(1, -126, 0, 10),
+    BackgroundColor3 = THEME.Bg,
+    BorderSizePixel = 0
+}, topBar)
+corner(fpsPill, 12)
+mk("UIStroke", { Color = THEME.Border, Thickness = 1 }, fpsPill)
+
+local fpsLabel = mk("TextLabel", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+    Text = "-- FPS",
+    TextColor3 = THEME.Good,
+    Font = Enum.Font.GothamBold,
+    TextSize = 12
+}, fpsPill)
+
+do
+    local frames, last = 0, os.clock()
+    track(RunService.RenderStepped:Connect(function()
+        frames = frames + 1
+        local now = os.clock()
+        if now - last >= 0.5 then
+            if main.Visible then
+                local fps = math.floor(frames / (now - last) + 0.5)
+                fpsLabel.Text = fps .. " FPS"
+                fpsLabel.TextColor3 = fps >= 50 and THEME.Good or (fps >= 30 and THEME.Warn or THEME.Bad)
+            end
+            frames, last = 0, now
+        end
+    end))
+end
 
 local minimizeBtn = mk("TextButton", {
     Size = UDim2.fromOffset(30, 30),
@@ -1000,6 +1116,15 @@ local function addSlider(page, text, min, max, key, callback)
         if callback then callback(value) end
     end
 
+    local function setValue(value)
+        value = math.clamp(math.floor(value), min, max)
+        Config[key] = value
+        local rel = (value - min) / (max - min)
+        fill.Size = UDim2.fromScale(rel, 1)
+        knob.Position = UDim2.new(rel, -8, 0.5, -8)
+        valLabel.Text = tostring(value)
+    end
+
     hit.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
@@ -1027,7 +1152,53 @@ local function addSlider(page, text, min, max, key, callback)
         end
     end))
 
-    return row
+    return row, setValue
+end
+
+-- Быстрые кнопки-значения (чипы)
+local function addChips(page, values, labels, onPick, getCurrent)
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundTransparency = 1
+    }, page)
+    mk("UIListLayout", {
+        FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder
+    }, row)
+
+    local chips = {}
+    local function refresh()
+        for v, b in pairs(chips) do
+            local on = (getCurrent() == v)
+            b.BackgroundColor3 = on and THEME.Accent or THEME.ElementBg
+            b.TextColor3 = on and Color3.fromRGB(20, 20, 24) or THEME.Text
+        end
+    end
+
+    local n = #values
+    for i, v in ipairs(values) do
+        local b = mk("TextButton", {
+            Size = UDim2.new(1 / n, -6 * (n - 1) / n, 1, 0),
+            BackgroundColor3 = THEME.ElementBg,
+            BorderSizePixel = 0,
+            Text = labels[i],
+            TextColor3 = THEME.Text,
+            Font = Enum.Font.GothamBold,
+            TextSize = 12,
+            AutoButtonColor = false,
+            LayoutOrder = i
+        }, row)
+        corner(b, 8)
+        chips[v] = b
+        b.MouseButton1Click:Connect(function()
+            onPick(v)
+            refresh()
+        end)
+    end
+
+    refresh()
+    return refresh
 end
 
 local function addButton(page, text, callback, danger)
@@ -1067,17 +1238,23 @@ end
 -- RENDER
 local renderPage = createTab("Render", 1)
 addSection(renderPage, "Performance")
-addToggle(renderPage, "Ultra FPS Boost", "FPSBoost", "Плотный пластик, без теней и частиц", function(on)
+addToggle(renderPage, "Ultra FPS Boost", "FPSBoost", "Без текстур, теней, света и частиц", function(on)
     if on then applyBoost() else restoreBoost() end
     notify(on and "FPS Boost: ON" or "FPS Boost: OFF (restoring)")
 end)
-addToggle(renderPage, "Remove Textures", "RemoveTextures", "Сильнее буст, но меши могут стать пустыми", function()
-    if Config.FPSBoost then restoreBoost() end
-end)
 addToggle(renderPage, "Auto Clear Memory", "AutoClean", "Очистка мусора каждые 45 сек")
 addSection(renderPage, "Frame rate")
-addToggle(renderPage, "FPS Limit", "FPSLimit", nil, function() updateFPS() end)
-addSlider(renderPage, "FPS Cap", 15, 120, "FPS", function() updateFPS() end)
+addToggle(renderPage, "FPS Limit", "FPSLimit", "Выключи, чтобы снять ограничение", function() updateFPS() end)
+local refreshChips = function() end
+local _, setFPSSlider = addSlider(renderPage, "FPS Cap", 15, 240, "FPS", function()
+    updateFPS()
+    refreshChips()
+end)
+refreshChips = addChips(renderPage, { 30, 60, 90, 120, 240 }, { "30", "60", "90", "120", "MAX" }, function(v)
+    setFPSSlider(v)
+    saveConfig()
+    updateFPS()
+end, function() return Config.FPS end)
 if type(setfpscap) ~= "function" then
     addLabel(renderPage, "Твой эксплойт не поддерживает setfpscap - лимит FPS не будет работать.")
 end
@@ -1127,8 +1304,15 @@ task.spawn(function()
     end
 
     local list = {}
+    local hidden = {
+        ["ant field"] = true, ["blue brick"] = true, ["hub"] = true,
+        ["mixed brick"] = true, ["red brick"] = true, ["white brick"] = true
+    }
     for _, z in ipairs(zones:GetChildren()) do
-        if z:IsA("BasePart") then list[#list + 1] = z end
+        local lname = string.lower(z.Name)
+        if z:IsA("BasePart") and not hidden[lname] and not lname:find("brick", 1, true) then
+            list[#list + 1] = z
+        end
     end
     table.sort(list, function(a, b) return a.Name < b.Name end)
 
@@ -1187,7 +1371,7 @@ end)
 -- INFO
 local infoPage = createTab("Info", 4)
 addSection(infoPage, "About")
-addLabel(infoPage, "Swarm Tweaker: Lite Project v2\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
+addLabel(infoPage, "Swarm Tweaker: Lite Project v3\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
 addSection(infoPage, "Control")
 addButton(infoPage, "Save Config Now", function()
     safeWrite(CONFIG_FILE, HttpService:JSONEncode(Config))
@@ -1230,7 +1414,7 @@ task.defer(function()
     notify("Lite Project loaded - RightShift to toggle")
 end)
 
-print("[Swarm Tweaker Lite v2] loaded. RightShift - hide/show menu.")
+print("[Swarm Tweaker Lite v3] loaded. RightShift - hide/show menu.")
 
 ]==]
 pcall(function() writefile("LiteProject.lua", SRC) end)
