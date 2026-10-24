@@ -34,7 +34,6 @@ local isDraggingSlider = false
 -- === АВТО-РЕДЖОИН (Безопасный) ===
 local REJOIN_FILE = "LiteProject_Server.txt"
 task.spawn(function()
-    -- Пытаемся сохранить при запуске
     pcall(function()
         if isfile and readfile and isfile(REJOIN_FILE) then
             local savedData = readfile(REJOIN_FILE)
@@ -51,7 +50,6 @@ task.spawn(function()
         end
     end)
     
-    -- Постоянное сохранение
     while task.wait(30) do
         if _G.AutoRejoin then
             pcall(function()
@@ -70,7 +68,7 @@ local function updateFPS()
             if _G.FPSLimitActive then
                 setfpscap(_G.CurrentFPS)
             else
-                setfpscap(9999) -- Безлимит
+                setfpscap(9999)
             end
         end
     end)
@@ -97,12 +95,13 @@ mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.BackgroundColor3 = THEME.Bg
 mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
+mainFrame.ClipsDescendants = true -- 🔥 ЗАЩИТА ОТ ВЫЛЕЗАНИЯ ЗА КРАЯ
 mainFrame.Parent = gui
 
 local mainCorner = Instance.new("UICorner", mainFrame)
 mainCorner.CornerRadius = UDim.new(0, 8)
 
--- Драг окна (с защитой слайдера)
+-- Драг окна
 local function makeDraggable(frame, onTap)
     local dragging, dragInput, dragStart, startPos, maxDist = false, nil, nil, nil, 0
     frame.InputBegan:Connect(function(input)
@@ -191,6 +190,7 @@ local function createTab(text, yPos)
     return btn
 end
 
+-- 🔥 ИСПРАВЛЕННЫЙ ТУМБЛЕР
 local function createToggle(text, default, yPos, callback)
     local container = Instance.new("Frame", content)
     container.Size = UDim2.new(1, -40, 0, 30)
@@ -208,7 +208,8 @@ local function createToggle(text, default, yPos, callback)
     
     local toggleBg = Instance.new("TextButton", container)
     toggleBg.Size = UDim2.new(0, 40, 0, 24)
-    toggleBg.Position = UDim2.new(1, 0, 0.5, -12)
+    -- 🔥 ИСПРАВЛЕНИЕ: сдвигаем влево на ширину кнопки (-40), чтобы она была ВНУТРИ
+    toggleBg.Position = UDim2.new(1, -40, 0.5, -12) 
     toggleBg.BackgroundColor3 = default and THEME.Accent or THEME.ToggleOff
     toggleBg.Text = ""
     toggleBg.AutoButtonColor = false
@@ -237,7 +238,7 @@ local function createToggle(text, default, yPos, callback)
     return container
 end
 
--- 🔥 ИДЕАЛЬНЫЙ СЛАЙДЕР
+-- 🔥 ИСПРАВЛЕННЫЙ СЛАЙДЕР
 local function createSlider(text, default, yPos, callback)
     local container = Instance.new("Frame", content)
     container.Size = UDim2.new(1, -40, 0, 50)
@@ -255,7 +256,8 @@ local function createSlider(text, default, yPos, callback)
     
     local valLabel = Instance.new("TextLabel", container)
     valLabel.Size = UDim2.new(0, 40, 0, 15)
-    valLabel.Position = UDim2.new(1, -40, 0, 0)
+    -- 🔥 ИСПРАВЛЕНИЕ: Прижимаем текст значения к правому краю контейнера
+    valLabel.Position = UDim2.new(1, -40, 0, 0) 
     valLabel.BackgroundTransparency = 1
     valLabel.Text = tostring(default)
     valLabel.TextColor3 = THEME.Accent
@@ -264,7 +266,7 @@ local function createSlider(text, default, yPos, callback)
     valLabel.TextXAlignment = Enum.TextXAlignment.Right
     
     local track = Instance.new("TextButton", container)
-    track.Size = UDim2.new(1, 0, 0, 20) -- Толстая зона клика
+    track.Size = UDim2.new(1, 0, 0, 20)
     track.Position = UDim2.new(0, 0, 0, 20)
     track.BackgroundTransparency = 1
     track.Text = ""
@@ -333,13 +335,11 @@ end
 -- === НАПОЛНЕНИЕ ===
 local renderElements, playerElements, rejoinElements = {}, {}, {}
 
--- Render Tab
 table.insert(renderElements, createToggle("Ultra FPS Boost", false, 10, function(s) _G.FPSBoostActive = s end))
 table.insert(renderElements, createToggle("Auto Clear Memory", true, 50, function(s) _G.AutoCleanMemory = s end))
 table.insert(renderElements, createToggle("FPS Limit Enable", true, 90, function(s) _G.FPSLimitActive = s; updateFPS() end))
 table.insert(renderElements, createSlider("FPS Cap", 60, 130, function(v) _G.CurrentFPS = v; updateFPS() end))
 
--- Player Tab
 table.insert(playerElements, createButton("Teleport: Pine Tree", 10, function()
     pcall(function()
         if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
@@ -357,7 +357,6 @@ table.insert(playerElements, createButton("Teleport: Spawn", 60, function()
     end)
 end))
 
--- Rejoin Tab
 table.insert(rejoinElements, createToggle("Auto Rejoin (Save Server)", true, 10, function(s) _G.AutoRejoin = s end))
 table.insert(rejoinElements, createButton("Rejoin Now", 60, function()
     pcall(function()
@@ -370,7 +369,6 @@ end))
 for _, v in pairs(playerElements) do v.Visible = false end
 for _, v in pairs(rejoinElements) do v.Visible = false end
 
--- Переключение вкладок
 local btnRender = createTab("Render", 15)
 local btnPlayer = createTab("Player", 65)
 local btnRejoin = createTab("Rejoin", 115)
@@ -391,7 +389,6 @@ btnRejoin.MouseButton1Click:Connect(function() selectTab(btnRejoin, btnRender, b
 
 selectTab(btnRender, btnPlayer, btnRejoin, renderElements, playerElements, rejoinElements)
 
--- Мини-иконка
 local openBtn = Instance.new("TextButton", minGui)
 openBtn.Size = UDim2.new(0, 45, 0, 45)
 openBtn.Position = UDim2.new(0.5, 0, 0, 30)
@@ -407,7 +404,6 @@ Instance.new("UICorner", openBtn).CornerRadius = UDim.new(1, 0)
 makeDraggable(openBtn, function() openBtn.Visible = false; mainFrame.Visible = true end)
 minimizeBtn.MouseButton1Click:Connect(function() mainFrame.Visible = false; openBtn.Visible = true end)
 
--- === ФОНОВЫЕ ЦИКЛЫ ===
 task.spawn(function()
     while task.wait(45) do
         if _G.AutoCleanMemory then pcall(function() collectgarbage("collect") end) end
