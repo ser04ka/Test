@@ -1,4 +1,4 @@
--- === Swarm Tweaker: Lite Project (Final Fix + Auto Rejoin) ===
+-- === Swarm Tweaker: Lite Project (Fixed UI & Safe Rejoin) ===
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
@@ -31,25 +31,9 @@ _G.AutoRejoin = true
 _G.CurrentFPS = 60
 local isDraggingSlider = false
 
--- === АВТО-РЕДЖОИН (Безопасный) ===
+-- === АВТО-РЕДЖОИН (Только сохранение, без автоперехода) ===
 local REJOIN_FILE = "LiteProject_Server.txt"
 task.spawn(function()
-    pcall(function()
-        if isfile and readfile and isfile(REJOIN_FILE) then
-            local savedData = readfile(REJOIN_FILE)
-            if savedData and savedData ~= "" then
-                local sep = string.find(savedData, "|")
-                if sep and _G.AutoRejoin then
-                    local placeId = tonumber(string.sub(savedData, 1, sep - 1))
-                    local jobId = string.sub(savedData, sep + 1)
-                    if jobId and jobId ~= "" and game.JobId ~= jobId then
-                        TeleportService:TeleportToPlaceInstance(placeId, jobId, player)
-                    end
-                end
-            end
-        end
-    end)
-    
     while task.wait(30) do
         if _G.AutoRejoin then
             pcall(function()
@@ -95,7 +79,7 @@ mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 mainFrame.BackgroundColor3 = THEME.Bg
 mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
-mainFrame.ClipsDescendants = true -- 🔥 ЗАЩИТА ОТ ВЫЛЕЗАНИЯ ЗА КРАЯ
+mainFrame.ClipsDescendants = true
 mainFrame.Parent = gui
 
 local mainCorner = Instance.new("UICorner", mainFrame)
@@ -174,6 +158,12 @@ content.Size = UDim2.new(1, -140, 1, -46)
 content.Position = UDim2.new(0, 140, 0, 46)
 content.BackgroundTransparency = 1
 
+-- 🔥 ИДЕАЛЬНЫЕ ОТСТУПЫ (Чтобы ничего не прилипало)
+local contentPad = Instance.new("UIPadding", content)
+contentPad.PaddingTop = UDim.new(0, 15)
+contentPad.PaddingLeft = UDim.new(0, 20)
+contentPad.PaddingRight = UDim.new(0, 20)
+
 -- === КОМПОНЕНТЫ ===
 local function createTab(text, yPos)
     local btn = Instance.new("TextButton", sidebar)
@@ -190,15 +180,14 @@ local function createTab(text, yPos)
     return btn
 end
 
--- 🔥 ИСПРАВЛЕННЫЙ ТУМБЛЕР
 local function createToggle(text, default, yPos, callback)
     local container = Instance.new("Frame", content)
-    container.Size = UDim2.new(1, -40, 0, 30)
-    container.Position = UDim2.new(0, 20, 0, yPos)
+    container.Size = UDim2.new(1, 0, 0, 30)
+    container.Position = UDim2.new(0, 0, 0, yPos)
     container.BackgroundTransparency = 1
     
     local label = Instance.new("TextLabel", container)
-    label.Size = UDim2.new(1, -50, 1, 0)
+    label.Size = UDim2.new(1, -50, 1, 0) -- Оставляем 50 пикселей справа под тумблер
     label.BackgroundTransparency = 1
     label.Text = text
     label.TextColor3 = THEME.Text
@@ -208,8 +197,7 @@ local function createToggle(text, default, yPos, callback)
     
     local toggleBg = Instance.new("TextButton", container)
     toggleBg.Size = UDim2.new(0, 40, 0, 24)
-    -- 🔥 ИСПРАВЛЕНИЕ: сдвигаем влево на ширину кнопки (-40), чтобы она была ВНУТРИ
-    toggleBg.Position = UDim2.new(1, -40, 0.5, -12) 
+    toggleBg.Position = UDim2.new(1, -40, 0.5, -12) -- Прижимаем вправо РОВНО на ширину тумблера
     toggleBg.BackgroundColor3 = default and THEME.Accent or THEME.ToggleOff
     toggleBg.Text = ""
     toggleBg.AutoButtonColor = false
@@ -238,11 +226,10 @@ local function createToggle(text, default, yPos, callback)
     return container
 end
 
--- 🔥 ИСПРАВЛЕННЫЙ СЛАЙДЕР
 local function createSlider(text, default, yPos, callback)
     local container = Instance.new("Frame", content)
-    container.Size = UDim2.new(1, -40, 0, 50)
-    container.Position = UDim2.new(0, 20, 0, yPos)
+    container.Size = UDim2.new(1, 0, 0, 50)
+    container.Position = UDim2.new(0, 0, 0, yPos)
     container.BackgroundTransparency = 1
     
     local label = Instance.new("TextLabel", container)
@@ -256,8 +243,7 @@ local function createSlider(text, default, yPos, callback)
     
     local valLabel = Instance.new("TextLabel", container)
     valLabel.Size = UDim2.new(0, 40, 0, 15)
-    -- 🔥 ИСПРАВЛЕНИЕ: Прижимаем текст значения к правому краю контейнера
-    valLabel.Position = UDim2.new(1, -40, 0, 0) 
+    valLabel.Position = UDim2.new(1, -40, 0, 0) -- Прижимаем вправо ровно на 40 пикселей
     valLabel.BackgroundTransparency = 1
     valLabel.Text = tostring(default)
     valLabel.TextColor3 = THEME.Accent
@@ -320,8 +306,8 @@ end
 
 local function createButton(text, yPos, callback)
     local btn = Instance.new("TextButton", content)
-    btn.Size = UDim2.new(1, -40, 0, 40)
-    btn.Position = UDim2.new(0, 20, 0, yPos)
+    btn.Size = UDim2.new(1, 0, 0, 40)
+    btn.Position = UDim2.new(0, 0, 0, yPos)
     btn.BackgroundColor3 = THEME.ElementBg
     btn.Text = text
     btn.TextColor3 = THEME.Text
@@ -358,9 +344,20 @@ table.insert(playerElements, createButton("Teleport: Spawn", 60, function()
 end))
 
 table.insert(rejoinElements, createToggle("Auto Rejoin (Save Server)", true, 10, function(s) _G.AutoRejoin = s end))
-table.insert(rejoinElements, createButton("Rejoin Now", 60, function()
+table.insert(rejoinElements, createButton("Rejoin Now (No Error)", 60, function()
     pcall(function()
-        if game.JobId and game.JobId ~= "" then
+        if isfile and isfile(REJOIN_FILE) then
+            local data = readfile(REJOIN_FILE)
+            local sep = string.find(data, "|")
+            if sep then
+                local placeId = tonumber(string.sub(data, 1, sep - 1))
+                local jobId = string.sub(data, sep + 1)
+                if placeId and jobId and jobId ~= "" then
+                    TeleportService:TeleportToPlaceInstance(placeId, jobId, player)
+                end
+            end
+        else
+            -- Если файла нет, перекидываем в текущий сервер
             TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
         end
     end)
