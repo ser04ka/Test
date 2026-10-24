@@ -1,4 +1,4 @@
--- === Swarm Tweaker: Lite Project (Full Fixed Rejoin) ===
+-- === Swarm Tweaker: Lite Project (Aggressive Rejoin Fix) ===
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -6,6 +6,9 @@ local UserInputService = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+local GuiService = game:GetService("GuiService")
+local LogService = game:GetService("LogService")
 
 local player = Players.LocalPlayer
 while not player do
@@ -48,7 +51,7 @@ _G.CurrentFPS = 60
 local isDraggingSlider = false
 
 -- ============================================================
--- === АВТО-РЕДЖОИН: ЯДРО ===
+-- === АГРЕССИВНЫЙ АВТО-РЕДЖОИН (ATLAS-STYLE) ===
 -- ============================================================
 
 if _G.AutoRejoin == nil then
@@ -60,31 +63,22 @@ if _G.RejoinOnAnyError == nil then
 end
 
 _G.RejoinErrorCodes = {
-    273,
-    267,
-    287,
-    529,
-    304,
-    319,
-    317,
-    292,
+    273, 267, 287, 529, 304, 319, 317, 292
 }
 
 if not _G.LiteProjectRejoinLoaded then
     _G.LiteProjectRejoinLoaded = true
 
-    local GuiService = game:GetService("GuiService")
-    local LogService = game:GetService("LogService")
-
     local REJOIN_FILE = "LiteProject_Server.txt"
     local REJOIN_STATE = {
         busy = false,
         last = 0,
+        detected = false
     }
 
     local memoryServer = {
         placeId = nil,
-        jobId = nil,
+        jobId = nil
     }
 
     local function safeWrite(path, data)
@@ -102,47 +96,30 @@ if not _G.LiteProjectRejoinLoaded then
             end
             return nil
         end)
-
-        if ok then
-            return result
-        end
-
+        if ok then return result end
         return nil
     end
 
     local function containsErrorCode(text)
         text = tostring(text or "")
-
-        if text == "" then
-            return false
-        end
+        if text == "" then return false end
 
         for _, code in ipairs(_G.RejoinErrorCodes or {}) do
             local c = tostring(code)
-
-            -- Ищем код как отдельное число, чтобы не цеплять случайные совпадения
-            if
-                text:find("%f[%d]" .. c .. "%f[%D]")
-                or text:find("%f[%d]" .. c .. "$")
-            then
+            if text:find("%f[%d]" .. c .. "%f[%D]") or text:find("%f[%d]" .. c .. "$") then
                 return true
             end
         end
-
         return false
     end
 
     local function getSavedServer()
-        -- Сначала используем память, потому что после дисконнекта файл может быть недоступен
         if memoryServer.placeId and memoryServer.jobId and memoryServer.jobId ~= "" then
             return memoryServer.placeId, memoryServer.jobId
         end
 
         local data = safeRead(REJOIN_FILE)
-
-        if not data then
-            return nil, nil
-        end
+        if not data then return nil, nil end
 
         local placeStr, jobStr = string.match(tostring(data), "^(%d+)|(.*)$")
         local placeId = tonumber(placeStr)
@@ -150,7 +127,6 @@ if not _G.LiteProjectRejoinLoaded then
         if placeId and jobStr and jobStr ~= "" then
             return placeId, jobStr
         end
-
         return nil, nil
     end
 
@@ -168,42 +144,27 @@ if not _G.LiteProjectRejoinLoaded then
     end
 
     local function shouldRejoin(msg)
-        if not _G.AutoRejoin then
-            return false
-        end
-
-        if _G.RejoinOnAnyError then
-            return true
-        end
-
+        if not _G.AutoRejoin then return false end
+        if _G.RejoinOnAnyError then return true end
         return containsErrorCode(msg)
     end
 
     local function doRejoinCore(reason, force)
         reason = tostring(reason or "Unknown")
 
-        if not force and not shouldRejoin(reason) then
-            return
-        end
-
-        if REJOIN_STATE.busy and not force then
-            return
-        end
-
-        if not force and tick() - REJOIN_STATE.last < 8 then
-            return
-        end
+        if not force and not shouldRejoin(reason) then return end
+        if REJOIN_STATE.busy and not force then return end
+        if not force and tick() - REJOIN_STATE.last < 3 then return end
 
         REJOIN_STATE.busy = true
         REJOIN_STATE.last = tick()
+        REJOIN_STATE.detected = true
 
         task.spawn(function()
-            local attempts = force and 3 or 8
+            local attempts = force and 5 or 10
 
             for attempt = 1, attempts do
-                if not force and not _G.AutoRejoin then
-                    break
-                end
+                if not force and not _G.AutoRejoin then break end
 
                 saveCurrentServer()
 
@@ -212,39 +173,25 @@ if not _G.LiteProjectRejoinLoaded then
                 local jobId = savedJob or game.JobId
 
                 if placeId and placeId > 0 then
-                    -- Первые несколько попыток пробуем вернуться именно в сохранённый сервер.
-                    -- Если не выходит, дальше пробуем обычный вход в игру.
-                    local useJob = jobId and jobId ~= "" and attempt <= 4
-
                     local ok = pcall(function()
                         local target = Players.LocalPlayer
-
                         if target and target.Parent then
-                            if useJob then
-                                TeleportService:TeleportToPlaceInstance(placeId, jobId, target)
-                            else
-                                TeleportService:Teleport(placeId, target)
-                            end
+                            TeleportService:Teleport(placeId, target)
                         else
-                            if useJob then
-                                TeleportService:TeleportToPlaceInstance(placeId, jobId)
-                            else
-                                TeleportService:Teleport(placeId)
-                            end
+                            TeleportService:Teleport(placeId)
                         end
                     end)
 
                     if ok then
-                        -- Даём телепорту стартовать.
-                        task.wait(5)
+                        task.wait(3)
                         break
                     end
                 end
 
-                task.wait(math.clamp(2 + attempt * 2, 2, 12))
+                task.wait(math.clamp(1 + attempt, 1, 8))
             end
 
-            task.delay(8, function()
+            task.delay(5, function()
                 REJOIN_STATE.busy = false
             end)
         end)
@@ -271,7 +218,85 @@ if not _G.LiteProjectRejoinLoaded then
         end
     end)
 
-    -- 1) Ошибки телепорта
+    -- ============================================================
+    -- === АГРЕССИВНЫЙ МОНИТОРИНГ COREGUI (ATLAS-STYLE) ===
+    -- ============================================================
+
+    local function checkGuiForError(gui)
+        pcall(function()
+            if not gui or not gui:IsA("GuiObject") then return end
+
+            -- Проверяем сам элемент
+            if gui:IsA("TextLabel") or gui:IsA("TextButton") or gui:IsA("TextBox") then
+                local text = gui.Text
+                if text and text ~= "" then
+                    local lower = string.lower(text)
+                    if lower:find("error", 1, true)
+                        or lower:find("disconnect", 1, true)
+                        or lower:find("kicked", 1, true)
+                        or lower:find("failed", 1, true)
+                        or containsErrorCode(text) then
+                        doRejoinCore("CoreGuiError:" .. text, false)
+                    end
+                end
+            end
+
+            -- Рекурсивно проверяем детей
+            for _, child in ipairs(gui:GetChildren()) do
+                if child:IsA("GuiObject") then
+                    checkGuiForError(child)
+                end
+            end
+        end)
+    end
+
+    -- Мониторинг CoreGui
+    task.spawn(function()
+        pcall(function()
+            local robloxGui = game:GetService("CoreGui"):FindFirstChild("RobloxGui")
+            if not robloxGui then
+                robloxGui = game:GetService("CoreGui")
+            end
+
+            if robloxGui then
+                -- Проверяем существующие элементы
+                checkGuiForError(robloxGui)
+
+                -- Мониторим новые элементы
+                robloxGui.DescendantAdded:Connect(function(descendant)
+                    pcall(function()
+                        if _G.AutoRejoin and descendant:IsA("GuiObject") then
+                            checkGuiForError(descendant)
+                        end
+                    end)
+                end)
+            end
+        end)
+    end)
+
+    -- Быстрый цикл проверки CoreGui
+    task.spawn(function()
+        while task.wait(0.5) do
+            pcall(function()
+                if _G.AutoRejoin then
+                    local robloxGui = CoreGui:FindFirstChild("RobloxGui")
+                    if not robloxGui then
+                        robloxGui = CoreGui
+                    end
+
+                    if robloxGui then
+                        checkGuiForError(robloxGui)
+                    end
+                end
+            end)
+        end
+    end)
+
+    -- ============================================================
+    -- === СТАНДАРТНЫЕ ОБРАБОТЧИКИ ОШИБОК ===
+    -- ============================================================
+
+    -- Ошибки телепорта
     pcall(function()
         TeleportService.TeleportInitFailed:Connect(function(targetPlayer, result)
             pcall(function()
@@ -300,12 +325,11 @@ if not _G.LiteProjectRejoinLoaded then
         end)
     end)
 
-    -- 2) Ошибки из клиентского GUI
+    -- Ошибки из GUI
     pcall(function()
         GuiService.ErrorMessageChanged:Connect(function()
             pcall(function()
                 local msg = GuiService.ErrorMessage
-
                 if msg and msg ~= "" then
                     doRejoinCore("GuiError:" .. tostring(msg), false)
                 end
@@ -313,32 +337,24 @@ if not _G.LiteProjectRejoinLoaded then
         end)
     end)
 
-    -- Если ошибка уже висит на момент выполнения скрипта
     pcall(function()
         local msg = GuiService.ErrorMessage
-
         if msg and msg ~= "" then
             doRejoinCore("GuiErrorInitial:" .. tostring(msg), false)
         end
     end)
 
-    -- 3) Ошибки из лога
+    -- Ошибки из лога
     pcall(function()
         LogService.MessageOut:Connect(function(message, messageType)
             pcall(function()
-                if
-                    messageType == Enum.MessageType.MessageError
-                    or messageType == Enum.MessageType.MessageWarning
-                then
+                if messageType == Enum.MessageType.MessageError or messageType == Enum.MessageType.MessageWarning then
                     local msg = tostring(message)
                     local lower = string.lower(msg)
-
-                    if
-                        containsErrorCode(msg)
+                    if containsErrorCode(msg)
                         or lower:find("disconnect", 1, true)
                         or lower:find("connection", 1, true)
-                        or lower:find("timeout", 1, true)
-                    then
+                        or lower:find("timeout", 1, true) then
                         doRejoinCore("LogError:" .. msg, false)
                     end
                 end
@@ -346,10 +362,9 @@ if not _G.LiteProjectRejoinLoaded then
         end)
     end)
 
-    -- 4) Сетевой дисконнект, если сервис доступен
+    -- Сетевой дисконнект
     pcall(function()
         local NetworkClient = game:GetService("NetworkClient")
-
         NetworkClient.ClientDisconnected:Connect(function(msg)
             pcall(function()
                 doRejoinCore("NetworkClientDisconnected:" .. tostring(msg), false)
@@ -357,7 +372,7 @@ if not _G.LiteProjectRejoinLoaded then
         end)
     end)
 
-    -- 5) PlayerDisconnecting, если доступно
+    -- PlayerDisconnecting
     pcall(function()
         Players.PlayerDisconnecting:Connect(function(plr)
             pcall(function()
@@ -368,7 +383,7 @@ if not _G.LiteProjectRejoinLoaded then
         end)
     end)
 
-    -- 6) Если локальный игрок вдруг выгружается
+    -- Если локальный игрок выгружается
     pcall(function()
         player.AncestryChanged:Connect(function()
             pcall(function()
@@ -379,7 +394,7 @@ if not _G.LiteProjectRejoinLoaded then
         end)
     end)
 
-    -- 7) Watchdog: если серверное время не обновляется, скорее всего связь отвалилась
+    -- Watchdog: если серверное время не обновляется
     task.spawn(function()
         local lastDistributed = nil
         local lastGood = tick()
@@ -388,7 +403,7 @@ if not _G.LiteProjectRejoinLoaded then
             lastDistributed = Workspace.DistributedGameTime
         end)
 
-        while task.wait(5) do
+        while task.wait(3) do
             if _G.AutoRejoin then
                 local ok, current = pcall(function()
                     return Workspace.DistributedGameTime
@@ -397,7 +412,7 @@ if not _G.LiteProjectRejoinLoaded then
                 if ok and current ~= lastDistributed then
                     lastDistributed = current
                     lastGood = tick()
-                elseif tick() - lastGood > 75 then
+                elseif tick() - lastGood > 45 then
                     doRejoinCore("WatchdogNoServerUpdate", false)
                     lastGood = tick()
                 end
@@ -405,24 +420,41 @@ if not _G.LiteProjectRejoinLoaded then
         end
     end)
 
-    -- 8) Хук Kick, если твой исполнитель поддерживает такие функции.
-    -- Если не нужен или ломает игру — удали этот блок.
+    -- Хук Kick
     pcall(function()
         if hookmetamethod and getnamecallmethod and checkcaller then
             local oldNamecall
-
             oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 pcall(function()
                     if not checkcaller() then
                         local method = getnamecallmethod()
-
                         if self == Players.LocalPlayer and (method == "Kick" or method == "kick") then
                             doRejoinCore("PlayerKickHook", false)
                         end
                     end
                 end)
-
                 return oldNamecall(self, ...)
+            end)
+        end
+    end)
+
+    -- Быстрый цикл проверки ошибок в PlayerGui
+    task.spawn(function()
+        while task.wait(1) do
+            pcall(function()
+                if _G.AutoRejoin and playerGui then
+                    for _, gui in ipairs(playerGui:GetDescendants()) do
+                        if gui:IsA("TextLabel") or gui:IsA("TextButton") then
+                            local text = gui.Text
+                            if text and text ~= "" then
+                                if containsErrorCode(text) then
+                                    doRejoinCore("PlayerGuiError:" .. text, false)
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
             end)
         end
     end)
