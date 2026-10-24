@@ -1,6 +1,6 @@
 local SRC = [==[
 -- ============================================================
--- === Swarm Tweaker: Lite Project v5 (FULL, SAFE REJOIN) ===
+-- === Swarm Tweaker: Lite Project v6 (FULL, SAFE REJOIN) ===
 -- RightShift - скрыть/показать меню
 -- ============================================================
 
@@ -71,11 +71,16 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 4,
+    V = 6,
     FPSBoost = true,
-    HideBees = true,
-    HideTokens = true,
-    HideDecor = true,
+    HideBees = true,        -- пчёлы удаляются полностью
+    HideTokens = true,      -- токены невидимы, но собираются
+    HideBalloons = true,    -- шары (Balloons) и надписи над ними
+    HideDecor = true,       -- цветки, подсолнухи, деревья и т.д. удаляются
+    HidePlayers = false,    -- другие игроки (по желанию)
+    DarkWorld = true,       -- тёмная карта: без света и неба
+    Bright = 30,            -- яркость тёмного мира 0-100
+    CustomDelete = "",      -- свои слова для удаления (через запятую)
     AutoClean = true,
     FPSLimit = true,
     FPS = 60,
@@ -426,18 +431,28 @@ end)
 -- ============================================================
 
 local boost = {
-    parts = setmetatable({}, { __mode = "k" }),
-    fx = setmetatable({}, { __mode = "k" }),
+    parts = setmetatable({}, { __mode = "k" }),  -- части: оригинальные значения
+    fx = setmetatable({}, { __mode = "k" }),     -- эффекты/декали/гуи: { свойство = оригинал }
+    dyn = setmetatable({}, { __mode = "k" }),    -- на что уже повешены "стражи" свойств
+    hide = setmetatable({}, { __mode = "k" }),
     light = nil,
     quality = nil,
+    meshDetail = nil,
     conn = nil,
+    rs = nil,
     token = 0,
+    on = false,
     restoring = false,
-    hide = setmetatable({}, { __mode = "k" }),
     names = {},
     dnames = {},
+    bnames = {},
+    custom = {},
     deleted = 0,
-    underY = nil
+    underY = nil,
+    madeSky = nil,
+    beeHideOnly = false,
+    killT = 0,
+    killN = 0
 }
 
 local FX_CLASSES = {
@@ -445,6 +460,10 @@ local FX_CLASSES = {
     Smoke = true, Fire = true, Sparkles = true,
     PointLight = true, SpotLight = true, SurfaceLight = true,
     Clouds = true, Highlight = true
+}
+local POST_CLASSES = {
+    BlurEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
+    BloomEffect = true, DepthOfFieldEffect = true
 }
 
 -- Нарезка работы по времени: не фризит даже слабое устройство
@@ -457,54 +476,89 @@ local function newSlicer()
         end
     end
 end
-local POST_CLASSES = {
-    BlurEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
-    BloomEffect = true, DepthOfFieldEffect = true
-}
+
+-- Владелец персонажа (игрок), если объект - часть персонажа
+local function getCharOwner(obj)
+    local cur = obj
+    while cur and cur ~= Workspace do
+        if cur:IsA("Model") then
+            local p = Players:GetPlayerFromCharacter(cur)
+            if p then return p end
+        end
+        cur = cur.Parent
+    end
+    return nil
+end
 
 local function inCharacter(obj)
-    local model = obj:FindFirstAncestorOfClass("Model")
-    return model ~= nil and Players:GetPlayerFromCharacter(model) ~= nil
+    return getCharOwner(obj) ~= nil
+end
+
+-- Запоминаем оригинал свойства и ставим новое значение
+local function fxSet(obj, prop, value)
+    local e = boost.fx[obj]
+    if not e then
+        e = {}
+        boost.fx[obj] = e
+    end
+    if e[prop] == nil then e[prop] = obj[prop] end
+    if obj[prop] ~= value then obj[prop] = value end
+end
+
+-- "Страж" свойства: если игра снова изменит значение (анимация появления токена
+-- и т.п.), сразу возвращаем нужное. Из-за этого раньше иногда мелькали токены/пчёлы.
+local function watch(obj, prop, enforce)
+    local w = boost.dyn[obj]
+    if not w then
+        w = {}
+        boost.dyn[obj] = w
+    end
+    if w[prop] then return end
+    w[prop] = true
+    local tk = boost.token
+    obj:GetPropertyChangedSignal(prop):Connect(function()
+        if alive and boost.on and boost.token == tk then
+            pcall(enforce)
+        end
+    end)
 end
 
 -- Правила скрытия по названиям объектов (подстроки в нижнем регистре).
--- Объекты НЕ удаляются, а скрываются (Transparency = 1) - это безопасно:
--- токены остаются собираемыми, ничего не ломается, а при выключении всё возвращается.
 local HIDE_RULES = {
     { flag = "HideBees", include = { "bee" },
       exclude = { "bear", "honey", "hive", "shop", "store", "spawn" } },
     { flag = "HideTokens", include = { "collectible" }, exclude = {} },
+    { flag = "HideBalloons", include = { "balloon" }, exclude = { "gui", "shop", "store" } },
     { flag = "HideDecor",
       include = {
           "bubble", "particle", "tree", "cactus", "pumpkin", "strawberr", "clover",
           "web", "bush", "bamboo", "pineapple", "pepper", "sunflower", "coconut",
-          "palm", "rose", "frog", "fence", "flower", "grass"
+          "palm", "rose", "frog", "fence", "flower", "grass", "bloom", "sprout", "petal"
       },
-      exclude = { "crab" } }
+      -- платформы, лестницы и т.п. НИКОГДА не прячем
+      exclude = { "crab", "platform", "stair", "step", "ramp", "bridge", "ladder",
+                  "path", "zone", "street", "floor", "ground" } }
 }
 local SKIP_NAMES = {
     part = true, meshpart = true, union = true, model = true,
     folder = true, handle = true, mesh = true
 }
 
+local function ruleMatches(rule, n)
+    for _, x in ipairs(rule.exclude) do
+        if n:find(x, 1, true) then return false end
+    end
+    for _, k in ipairs(rule.include) do
+        if n:find(k, 1, true) then return true end
+    end
+    return false
+end
+
 local function nameHidesRaw(name)
     local n = string.lower(name)
     if SKIP_NAMES[n] then return false end
     for _, rule in ipairs(HIDE_RULES) do
-        if Config[rule.flag] then
-            local blocked = false
-            for _, x in ipairs(rule.exclude) do
-                if n:find(x, 1, true) then
-                    blocked = true
-                    break
-                end
-            end
-            if not blocked then
-                for _, k in ipairs(rule.include) do
-                    if n:find(k, 1, true) then return true end
-                end
-            end
-        end
+        if Config[rule.flag] and ruleMatches(rule, n) then return true end
     end
     return false
 end
@@ -519,7 +573,7 @@ local function nameHides(name)
 end
 
 -- true, если сам объект или любой его родитель подходит под правила
--- (персонажи игроков никогда не скрываются). Результаты кэшируются.
+-- (персонажи игроков не затрагиваются). Результаты кэшируются.
 local function hiddenByName(inst)
     local cache = boost.hide
     local chain, hit, n = {}, {}, 0
@@ -579,21 +633,48 @@ local function underMap(part)
     return ok and res and not inCharacter(part)
 end
 
+-- Платформа / пол: по ним можно ходить - такое не удаляем и не прячем
+local function isWalkable(p)
+    local ok, res = pcall(function()
+        if not p.CanCollide then return false end
+        local s = p.Size
+        if math.max(s.X, s.Z) >= 25 then return true end      -- большая земля поля
+        return s.Y <= 4 and s.X >= 5 and s.Z >= 5             -- плоская платформа
+    end)
+    return ok and res
+end
+
 -- ============================================================
--- Реальное УДАЛЕНИЕ декора (деревья, кусты, цветы, заборы и т.д.)
+-- Реальное УДАЛЕНИЕ декора (цветки, подсолнухи, деревья, кусты и т.д.)
 -- Удалённое возвращается только после перезахода на сервер.
 -- ============================================================
 local DELETE_KEYS = {
     "tree", "cactus", "pumpkin", "strawberr", "clover", "web", "bush", "bamboo",
     "pineapple", "pepper", "sunflower", "coconut", "palm", "rose", "frog",
-    "fence", "flower", "grass"
+    "fence", "flower", "grass", "bloom", "sprout", "petal"
 }
-local DELETE_EXCLUDE = { "crab", "zone", "street" }
+local DELETE_EXCLUDE = {
+    "crab", "zone", "street", "platform", "stair", "step", "ramp", "bridge",
+    "ladder", "path", "floor", "ground"
+}
 
 -- Контейнеры, внутри которых ничего не удаляем (игровая логика)
 local PROTECTED_ANCESTORS = {
     "FlowerZones", "Collectibles", "Particles", "Honeycombs", "NPCs", "Monsters", "MonsterSpawners"
 }
+-- Для пчёл защищены только эти контейнеры
+local BEE_PROTECTED = {
+    "Honeycombs", "NPCs", "Monsters", "MonsterSpawners", "FlowerZones", "Collectibles"
+}
+
+local function parseCustom()
+    local list = {}
+    for w in string.gmatch(string.lower(tostring(Config.CustomDelete or "")), "[^,;]+") do
+        w = w:match("^%s*(.-)%s*$")
+        if w ~= "" then list[#list + 1] = w end
+    end
+    boost.custom = list
+end
 
 local function decorNameMatches(name)
     local c = boost.dnames[name]
@@ -602,18 +683,27 @@ local function decorNameMatches(name)
     local n = string.lower(name)
     local res = false
     if not SKIP_NAMES[n] then
-        local blocked = false
-        for _, x in ipairs(DELETE_EXCLUDE) do
-            if n:find(x, 1, true) then
-                blocked = true
+        -- свои слова из меню имеют приоритет
+        for _, k in ipairs(boost.custom) do
+            if n:find(k, 1, true) then
+                res = true
                 break
             end
         end
-        if not blocked then
-            for _, k in ipairs(DELETE_KEYS) do
-                if n:find(k, 1, true) then
-                    res = true
+        if not res then
+            local blocked = false
+            for _, x in ipairs(DELETE_EXCLUDE) do
+                if n:find(x, 1, true) then
+                    blocked = true
                     break
+                end
+            end
+            if not blocked then
+                for _, k in ipairs(DELETE_KEYS) do
+                    if n:find(k, 1, true) then
+                        res = true
+                        break
+                    end
                 end
             end
         end
@@ -626,7 +716,7 @@ local function isProtected(obj)
     for _, name in ipairs(PROTECTED_ANCESTORS) do
         if obj.Name == name or obj:FindFirstAncestor(name) then return true end
     end
-    if Players:GetPlayerFromCharacter(obj) or inCharacter(obj) then return true end
+    if getCharOwner(obj) then return true end
     for _, pl in ipairs(Players:GetPlayers()) do
         local c = pl.Character
         if c and (obj == c or obj:IsAncestorOf(c)) then return true end
@@ -638,19 +728,11 @@ local function isProtected(obj)
     return false
 end
 
--- Большие твёрдые части (земля поля) не удаляем, чтобы не провалиться под карту
-local function isFloorPart(p)
-    return p.CanCollide and math.max(p.Size.X, p.Size.Z) >= 25
-end
-
-local function safeToDestroy(obj)
-    if obj:IsA("BasePart") then
-        return not isFloorPart(obj)
+local function beeProtected(obj)
+    for _, name in ipairs(BEE_PROTECTED) do
+        if obj.Name == name or obj:FindFirstAncestor(name) then return true end
     end
-    for _, d in ipairs(obj:GetDescendants()) do
-        if d:IsA("BasePart") and isFloorPart(d) then return false end
-    end
-    return true
+    return getCharOwner(obj) ~= nil
 end
 
 -- true = объект удалён (или уже удалён) и дальше его обрабатывать не нужно
@@ -669,19 +751,112 @@ local function decorDelete(obj)
     if not matched then return false end
     if obj:IsA("Folder") and parent == Workspace then return false end
 
-    if isProtected(obj) or not safeToDestroy(obj) then return false end
+    if isProtected(obj) then return false end
+
+    if obj:IsA("BasePart") then
+        -- платформа/пол - не трогаем
+        if isWalkable(obj) then return false end
+    else
+        -- если внутри есть платформы: сам объект оставляем,
+        -- удаляем только украшения без коллизии (листья, цветы и т.п.)
+        local descs = obj:GetDescendants()
+        local hasPlatform = false
+        for _, d in ipairs(descs) do
+            if d:IsA("BasePart") and isWalkable(d) then
+                hasPlatform = true
+                break
+            end
+        end
+        if hasPlatform then
+            for _, d in ipairs(descs) do
+                if d.Parent and d:IsA("BasePart") and not d.CanCollide and not isWalkable(d) then
+                    d:Destroy()
+                end
+            end
+            return false
+        end
+    end
 
     boost.deleted = boost.deleted + 1
     obj:Destroy()
     return true
 end
 
-local function processObj(obj)
+-- Пчёлы: удаляем полностью. Если игра пересоздаёт их бесконечно - автоматически
+-- переключаемся на скрытие, чтобы не нагружать устройство.
+local function beeNameMatches(name)
+    local c = boost.bnames[name]
+    if c == nil then
+        local n = string.lower(name)
+        c = (not SKIP_NAMES[n]) and ruleMatches(HIDE_RULES[1], n)
+        boost.bnames[name] = c
+    end
+    return c
+end
+
+local function beeDelete(obj)
+    if not Config.HideBees or boost.beeHideOnly then return false end
+    if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
+    if not beeNameMatches(obj.Name) then return false end
+    if beeProtected(obj) then return false end
+
+    local now = os.clock()
+    if now - boost.killT > 10 then
+        boost.killT, boost.killN = now, 0
+    end
+    boost.killN = boost.killN + 1
+    if boost.killN > 800 then
+        boost.beeHideOnly = true
+        notify("Bees: auto-recreate, hide mode")
+        return false
+    end
+
+    boost.deleted = boost.deleted + 1
+    obj:Destroy()
+    return true
+end
+
+-- Цветки "Bloom (Lvl N)": ищем по надписи над ними и удаляем весь цветок
+local function bloomGuiMatches(gui)
+    for _, d in ipairs(gui:GetDescendants()) do
+        if d:IsA("TextLabel") or d:IsA("TextButton") then
+            local t = string.lower(d.Text)
+            if t:find("bloom", 1, true) and t:find("lvl", 1, true) then return true end
+        end
+    end
+    return false
+end
+
+local function destroyBloom(gui)
+    local owner = gui.Adornee or gui.Parent
+    if not owner or owner == Workspace then return false end
+
+    local target = owner
+    if owner:IsA("BasePart") then
+        local m = owner:FindFirstAncestorOfClass("Model")
+        if m and m ~= Workspace and not getCharOwner(m) and #m:GetDescendants() <= 80 then
+            target = m
+        end
+    end
+
+    if target == Workspace or target:IsA("Terrain") then return false end
+    if isProtected(target) then return false end
+    if target:IsA("BasePart") and isWalkable(target) then return false end
+
+    boost.deleted = boost.deleted + 1
+    target:Destroy()
+    return true
+end
+
+local function processObj(obj, fast)
+    if not obj.Parent then return end
     if obj:IsA("Terrain") then return end
 
+    if beeDelete(obj) then return end
     if Config.HideDecor and decorDelete(obj) then return end
 
     if obj:IsA("BasePart") then
+        local owner = getCharOwner(obj)
         local s = boost.parts[obj]
         if not s then
             s = { obj.Material, obj.Reflectance, obj.CastShadow }
@@ -691,28 +866,180 @@ local function processObj(obj)
         obj.Reflectance = 0
         obj.Material = Enum.Material.Plastic
 
-        if s[4] == nil and obj:IsA("MeshPart") and not inCharacter(obj) then
-            s[4] = obj.TextureID
-            obj.TextureID = ""
+        if obj:IsA("MeshPart") then
+            if s[4] == nil and not owner then
+                s[4] = obj.TextureID
+                obj.TextureID = ""
+            end
+            if s[7] == nil then
+                s[7] = obj.RenderFidelity
+                obj.RenderFidelity = Enum.RenderFidelity.Performance
+            end
         end
 
-        if hiddenByName(obj) or (Config.HideDecor and underMap(obj)) then
+        local hide
+        if owner then
+            hide = Config.HidePlayers and owner ~= player
+        else
+            hide = (hiddenByName(obj) or (Config.HideDecor and underMap(obj))) and not isWalkable(obj)
+        end
+        if hide then
             if s[5] == nil then s[5] = obj.Transparency end
+            s[6] = true
             obj.Transparency = 1
+            -- LocalTransparencyModifier игра не трогает, поэтому
+            -- токены/пчёлы больше не "проявляются" при анимации появления
+            obj.LocalTransparencyModifier = 1
         end
+
     elseif FX_CLASSES[obj.ClassName] then
-        if boost.fx[obj] == nil then boost.fx[obj] = { "Enabled", obj.Enabled } end
-        obj.Enabled = false
+        fxSet(obj, "Enabled", false)
+        if obj.ClassName == "ParticleEmitter" then
+            -- :Emit() работает даже при Enabled = false, поэтому частицы делаем невидимыми
+            fxSet(obj, "Transparency", NumberSequence.new(1))
+        end
+
     elseif obj:IsA("Decal") or obj:IsA("Texture") then
-        if boost.fx[obj] == nil and not inCharacter(obj) then
-            boost.fx[obj] = { "Transparency", obj.Transparency }
-            obj.Transparency = 1
+        local owner = getCharOwner(obj)
+        if owner then
+            if Config.HidePlayers and owner ~= player and boost.fx[obj] == nil then
+                fxSet(obj, "Transparency", 1)
+            end
+        elseif boost.fx[obj] == nil then
+            fxSet(obj, "Transparency", 1)
+            fxSet(obj, "Texture", "")
+            if fast then
+                watch(obj, "Texture", function()
+                    if obj.Texture ~= "" then obj.Texture = "" end
+                end)
+                watch(obj, "Transparency", function()
+                    if obj.Transparency ~= 1 then obj.Transparency = 1 end
+                end)
+            end
         end
+
     elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
-        if boost.fx[obj] == nil and hiddenByName(obj) then
-            boost.fx[obj] = { "Enabled", obj.Enabled }
-            obj.Enabled = false
+        if boost.fx[obj] == nil then
+            local owner = getCharOwner(obj)
+            local hideIt
+            if owner then
+                hideIt = Config.HidePlayers and owner ~= player
+            else
+                hideIt = hiddenByName(obj)
+            end
+            if hideIt then
+                fxSet(obj, "Enabled", false)
+                if fast then
+                    watch(obj, "Enabled", function()
+                        if obj.Enabled then obj.Enabled = false end
+                    end)
+                end
+            end
         end
+
+        -- надпись "Bloom (Lvl N)" => удаляем цветок целиком
+        if Config.HideDecor and obj:IsA("BillboardGui") and not getCharOwner(obj) then
+            local function check()
+                if obj.Parent and alive and boost.on and Config.HideDecor and bloomGuiMatches(obj) then
+                    if not destroyBloom(obj) then
+                        pcall(fxSet, obj, "Enabled", false)
+                    end
+                end
+            end
+            if fast then
+                task.delay(1.5, function() pcall(check) end)
+            else
+                pcall(check)
+            end
+        end
+
+    elseif obj:IsA("Humanoid") then
+        local owner = getCharOwner(obj)
+        if Config.HidePlayers and owner and owner ~= player then
+            pcall(fxSet, obj, "DisplayDistanceType", Enum.HumanoidDisplayDistanceType.None)
+        end
+    end
+end
+
+-- ---------- освещение: тёмный мир без света и неба ----------
+
+local LIGHT_PROPS = {
+    "GlobalShadows", "FogEnd", "ShadowSoftness", "Brightness", "Ambient", "OutdoorAmbient",
+    "ColorShift_Top", "ColorShift_Bottom", "EnvironmentDiffuseScale",
+    "EnvironmentSpecularScale", "ExposureCompensation"
+}
+
+local SKY_PROPS = {
+    SkyboxBk = "", SkyboxDn = "", SkyboxFt = "", SkyboxLf = "", SkyboxRt = "", SkyboxUp = "",
+    SunTextureId = "", MoonTextureId = "", StarCount = 0, CelestialBodiesShown = false
+}
+
+local function setL(prop, value)
+    pcall(function() Lighting[prop] = value end)
+end
+
+local function applyLightProps()
+    setL("GlobalShadows", false)
+    setL("FogEnd", 9e9)
+    setL("ShadowSoftness", 0)
+    if Config.DarkWorld then
+        local g = math.floor(30 + Config.Bright * 1.5 + 0.5)
+        local c = Color3.fromRGB(g, g, g)
+        setL("Brightness", 0)
+        setL("Ambient", c)
+        setL("OutdoorAmbient", c)
+        setL("ColorShift_Top", Color3.new(0, 0, 0))
+        setL("ColorShift_Bottom", Color3.new(0, 0, 0))
+        setL("EnvironmentDiffuseScale", 0)
+        setL("EnvironmentSpecularScale", 0)
+        setL("ExposureCompensation", 0)
+    end
+end
+
+local function darkSky()
+    local found = false
+    for _, v in ipairs(Lighting:GetChildren()) do
+        if v:IsA("Sky") then
+            found = true
+            for p, val in pairs(SKY_PROPS) do
+                pcall(fxSet, v, p, val)
+            end
+        end
+    end
+    -- если неба в игре нет, Roblox рисует стандартное - ставим пустое (чёрный фон)
+    if not found and not boost.madeSky then
+        pcall(function()
+            local s = Instance.new("Sky")
+            for p, val in pairs(SKY_PROPS) do s[p] = val end
+            s.Parent = Lighting
+            boost.madeSky = s
+        end)
+    end
+end
+
+local function applyTech()
+    if type(sethiddenproperty) ~= "function" then return end
+    for _, name in ipairs({ "Compatibility", "Voxel" }) do
+        local ok = pcall(function()
+            sethiddenproperty(Lighting, "Technology", Enum.Technology[name])
+        end)
+        if ok then return end
+    end
+end
+
+local function enforceLighting()
+    applyLightProps()
+    if Config.DarkWorld then pcall(darkSky) end
+    for _, v in ipairs(Lighting:GetDescendants()) do
+        pcall(function()
+            if POST_CLASSES[v.ClassName] then
+                fxSet(v, "Enabled", false)
+            elseif v:IsA("Atmosphere") then
+                fxSet(v, "Density", 0)
+                fxSet(v, "Haze", 0)
+                fxSet(v, "Glare", 0)
+            end
+        end)
     end
 end
 
@@ -721,32 +1048,40 @@ local function applyBoost()
 
     boost.token = boost.token + 1
     local token = boost.token
+    boost.on = true
 
     boost.hide = setmetatable({}, { __mode = "k" })
-    boost.names, boost.dnames = {}, {}
+    boost.dyn = setmetatable({}, { __mode = "k" })
+    boost.names, boost.dnames, boost.bnames = {}, {}, {}
+    boost.beeHideOnly = false
+    parseCustom()
     boost.underY = computeUnderY()
 
     if not boost.light then
-        boost.light = {}
+        local l = { props = {} }
+        for _, p in ipairs(LIGHT_PROPS) do
+            local ok, v = pcall(function() return Lighting[p] end)
+            if ok then l.props[p] = v end
+        end
         pcall(function()
-            boost.light.GlobalShadows = Lighting.GlobalShadows
-            boost.light.FogEnd = Lighting.FogEnd
-            boost.light.ShadowSoftness = Lighting.ShadowSoftness
+            if type(gethiddenproperty) == "function" then
+                l.tech = gethiddenproperty(Lighting, "Technology")
+            end
         end)
         pcall(function()
             local t = Workspace.Terrain
-            boost.light.Water = { t.WaterWaveSize, t.WaterWaveSpeed, t.WaterReflectance }
+            l.water = { t.WaterWaveSize, t.WaterWaveSpeed, t.WaterReflectance }
         end)
-        pcall(function() boost.light.Decoration = Workspace.Terrain.Decoration end)
+        pcall(function() l.decoration = Workspace.Terrain.Decoration end)
+        boost.light = l
         pcall(function() boost.quality = settings().Rendering.QualityLevel end)
+        pcall(function() boost.meshDetail = settings().Rendering.MeshPartDetailLevel end)
     end
 
     pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    pcall(function()
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 9e9
-        Lighting.ShadowSoftness = 0
-    end)
+    pcall(function() settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04 end)
+    if Config.DarkWorld then applyTech() end
+    pcall(enforceLighting)
     pcall(function()
         local t = Workspace.Terrain
         t.WaterWaveSize = 0
@@ -755,91 +1090,102 @@ local function applyBoost()
     end)
     pcall(function() Workspace.Terrain.Decoration = false end)
 
-    for _, v in ipairs(Lighting:GetDescendants()) do
-        pcall(function()
-            if POST_CLASSES[v.ClassName] then
-                if boost.fx[v] == nil then boost.fx[v] = { "Enabled", v.Enabled } end
-                v.Enabled = false
-            elseif v:IsA("Atmosphere") then
-                if boost.fx[v] == nil then boost.fx[v] = { "Density", v.Density } end
-                v.Density = 0
-            end
-        end)
-    end
-
     -- Обработка карты кусками, чтобы не фризить слабое устройство
     task.spawn(function()
         local step = newSlicer()
         for _, v in ipairs(Workspace:GetDescendants()) do
             if not alive or boost.token ~= token or not Config.FPSBoost then return end
-            pcall(processObj, v)
+            pcall(processObj, v, false)
             step()
         end
     end)
 
-    if boost.conn then boost.conn:Disconnect() end
+    -- Периодически возвращаем тёмное освещение (игра может его менять)
+    task.spawn(function()
+        while alive and boost.token == token and Config.FPSBoost do
+            task.wait(2)
+            if alive and boost.token == token and Config.FPSBoost then
+                pcall(enforceLighting)
+            end
+        end
+    end)
 
+    if boost.conn then boost.conn:Disconnect() end
+    if boost.rs then boost.rs:Disconnect() end
+
+    -- Новые объекты (токены, пчёлы, шары) обрабатываем КАЖДЫЙ кадр прямо перед
+    -- отрисовкой (RenderStepped), поэтому они не успевают мелькнуть на экране.
     local queue, qh, qt = {}, 1, 0
     boost.conn = Workspace.DescendantAdded:Connect(function(v)
         qt = qt + 1
         queue[qt] = v
     end)
 
-    -- один воркер обрабатывает новые объекты (токены, частицы) в рамках бюджета времени
-    task.spawn(function()
-        while alive and boost.token == token and Config.FPSBoost do
-            local t0 = os.clock()
-            while qh <= qt and os.clock() - t0 < 0.004 do
-                local v = queue[qh]
-                queue[qh] = nil
-                qh = qh + 1
-                if v and v.Parent then pcall(processObj, v) end
-            end
-            if qh > qt then
-                qh, qt = 1, 0
-                task.wait(0.25)
-            else
-                task.wait()
-            end
+    boost.rs = RunService.RenderStepped:Connect(function()
+        if boost.token ~= token or not Config.FPSBoost then return end
+        local t0 = os.clock()
+        while qh <= qt and os.clock() - t0 < 0.004 do
+            local v = queue[qh]
+            queue[qh] = nil
+            qh = qh + 1
+            if v and v.Parent then pcall(processObj, v, true) end
         end
+        if qh > qt then qh, qt = 1, 0 end
     end)
 end
 
 local function restoreBoost()
     boost.token = boost.token + 1
     boost.restoring = true
+    boost.on = false
     boost.hide = setmetatable({}, { __mode = "k" })
-    boost.names, boost.dnames = {}, {}
+    boost.dyn = setmetatable({}, { __mode = "k" })
+    boost.names, boost.dnames, boost.bnames = {}, {}, {}
 
     if boost.conn then
         boost.conn:Disconnect()
         boost.conn = nil
     end
+    if boost.rs then
+        boost.rs:Disconnect()
+        boost.rs = nil
+    end
 
     if boost.light then
         local l = boost.light
+        for p, v in pairs(l.props) do
+            pcall(function() Lighting[p] = v end)
+        end
         pcall(function()
-            if l.GlobalShadows ~= nil then Lighting.GlobalShadows = l.GlobalShadows end
-            if l.FogEnd ~= nil then Lighting.FogEnd = l.FogEnd end
-            if l.ShadowSoftness ~= nil then Lighting.ShadowSoftness = l.ShadowSoftness end
-        end)
-        pcall(function()
-            local t = Workspace.Terrain
-            if l.Water then
-                t.WaterWaveSize = l.Water[1]
-                t.WaterWaveSpeed = l.Water[2]
-                t.WaterReflectance = l.Water[3]
+            if l.tech ~= nil and type(sethiddenproperty) == "function" then
+                sethiddenproperty(Lighting, "Technology", l.tech)
             end
         end)
         pcall(function()
-            if l.Decoration ~= nil then Workspace.Terrain.Decoration = l.Decoration end
+            local t = Workspace.Terrain
+            if l.water then
+                t.WaterWaveSize = l.water[1]
+                t.WaterWaveSpeed = l.water[2]
+                t.WaterReflectance = l.water[3]
+            end
+        end)
+        pcall(function()
+            if l.decoration ~= nil then Workspace.Terrain.Decoration = l.decoration end
         end)
         boost.light = nil
     end
     pcall(function()
+        if boost.madeSky then boost.madeSky:Destroy() end
+    end)
+    boost.madeSky = nil
+    pcall(function()
         if boost.quality then settings().Rendering.QualityLevel = boost.quality end
     end)
     boost.quality = nil
+    pcall(function()
+        if boost.meshDetail then settings().Rendering.MeshPartDetailLevel = boost.meshDetail end
+    end)
+    boost.meshDetail = nil
 
     task.spawn(function()
         local step = newSlicer()
@@ -851,15 +1197,19 @@ local function restoreBoost()
                     part.CastShadow = s[3]
                     if s[4] ~= nil then part.TextureID = s[4] end
                     if s[5] ~= nil then part.Transparency = s[5] end
+                    if s[6] then part.LocalTransparencyModifier = 0 end
+                    if s[7] ~= nil then part.RenderFidelity = s[7] end
                 end)
             end
             boost.parts[part] = nil
             step()
         end
 
-        for obj, s in pairs(boost.fx) do
+        for obj, e in pairs(boost.fx) do
             if obj and obj.Parent then
-                pcall(function() obj[s[1]] = s[2] end)
+                for prop, val in pairs(e) do
+                    pcall(function() obj[prop] = val end)
+                end
             end
             boost.fx[obj] = nil
             step()
@@ -1453,6 +1803,51 @@ local function addButton(page, text, callback, danger)
     return btn
 end
 
+-- Текстовое поле (для своих слов удаления)
+local function addInput(page, text, key, placeholder, callback)
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 62),
+        BackgroundColor3 = THEME.ElementBg,
+        BorderSizePixel = 0
+    }, page)
+    corner(row, 8)
+
+    mk("TextLabel", {
+        Size = UDim2.new(1, -24, 0, 20),
+        Position = UDim2.fromOffset(12, 6),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = THEME.Text,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, row)
+
+    local box = mk("TextBox", {
+        Size = UDim2.new(1, -24, 0, 26),
+        Position = UDim2.fromOffset(12, 30),
+        BackgroundColor3 = THEME.Bg,
+        BorderSizePixel = 0,
+        Text = tostring(Config[key] or ""),
+        PlaceholderText = placeholder,
+        PlaceholderColor3 = THEME.TextDim,
+        TextColor3 = THEME.Text,
+        Font = Enum.Font.Gotham,
+        TextSize = 12,
+        ClearTextOnFocus = false,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, row)
+    corner(box, 6)
+    mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, box)
+
+    box.FocusLost:Connect(function()
+        Config[key] = box.Text
+        saveConfig()
+        if callback then callback(box.Text) end
+    end)
+    return row
+end
+
 local function addGrid(page)
     local frame = mk("Frame", {
         Size = UDim2.new(1, 0, 0, 0),
@@ -1474,29 +1869,46 @@ end
 -- RENDER
 local renderPage = createTab("Render", 1)
 addSection(renderPage, "Performance")
-addToggle(renderPage, "FPS Boost", "FPSBoost", "Лёгкая графика: без текстур, теней, света, частиц", function(on)
+addToggle(renderPage, "FPS Boost", "FPSBoost", "Лёгкая графика: без текстур, света, частиц", function(on)
     if on then applyBoost() else restoreBoost() end
     if on then
         notify("FPS Boost: ON")
     elseif boost.deleted > 0 then
-        notify("FPS Boost: OFF (удалённый декор вернётся после перезахода)")
+        notify("FPS Boost: OFF (удалённое вернётся после перезахода)")
     else
         notify("FPS Boost: OFF")
     end
 end)
-addSection(renderPage, "What to hide (with FPS Boost)")
+
+addSection(renderPage, "Hide / delete (with FPS Boost)")
 local function reapplyHide()
     if Config.FPSBoost then restoreBoost() end -- восстановит и сразу применит заново
 end
-addToggle(renderPage, "Hide Bees", "HideBees", "Все пчёлы, включая декоративных", reapplyHide)
+addToggle(renderPage, "Delete Bees", "HideBees", "Пчёлы удаляются полностью", reapplyHide)
 addToggle(renderPage, "Hide Tokens", "HideTokens", "Токены невидимы, но собираются", reapplyHide)
-addToggle(renderPage, "Delete Map Decor", "HideDecor", "Удаляет деревья, кусты, цветы, заборы (до перезахода)", function(on)
+addToggle(renderPage, "Hide Balloons", "HideBalloons", "Шары и надписи над ними скрыты", reapplyHide)
+addToggle(renderPage, "Delete Map Decor", "HideDecor", "Цветки, подсолнухи, деревья, кусты", function(on)
     reapplyHide()
     if not on and boost.deleted > 0 then
         notify("Удалённое вернётся после перезахода")
     end
 end)
+addToggle(renderPage, "Hide Other Players", "HidePlayers", "Другие игроки и их ники скрыты", reapplyHide)
+addInput(renderPage, "Extra delete words", "CustomDelete", "например: sunflower, leaf, lamp", function()
+    reapplyHide()
+    notify("Список удаления обновлён")
+end)
+
+addSection(renderPage, "Dark world")
+addToggle(renderPage, "Dark World", "DarkWorld", "Без света и неба, тёмная карта", function(on)
+    reapplyHide()
+    notify(on and "Dark World: ON" or "Dark World: OFF")
+end)
+addSlider(renderPage, "Brightness", 0, 100, "Bright", function()
+    if Config.FPSBoost and boost.light then pcall(applyLightProps) end
+end)
 addToggle(renderPage, "Auto Clear Memory", "AutoClean", "Очистка мусора каждые 45 сек")
+
 addSection(renderPage, "Frame rate")
 addToggle(renderPage, "FPS Limit", "FPSLimit", "Выключи, чтобы снять ограничение", function() updateFPS() end)
 local refreshChips = function() end
@@ -1625,12 +2037,13 @@ end)
 -- INFO
 local infoPage = createTab("Info", 4)
 addSection(infoPage, "About")
-addLabel(infoPage, "Swarm Tweaker: Lite Project v5\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
+addLabel(infoPage, "Swarm Tweaker: Lite Project v6\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
 addSection(infoPage, "Control")
 addButton(infoPage, "Save Config Now", function()
     safeWrite(CONFIG_FILE, HttpService:JSONEncode(Config))
     notify("Config saved")
 end)
+
 local function dumpStructure()
     local out = {}
     for _, c in ipairs(Workspace:GetChildren()) do
@@ -1657,8 +2070,44 @@ local function dumpStructure()
     end
 end
 
+-- Список объектов вокруг игрока (в радиусе 50): помогает найти названия того,
+-- что не удалилось, чтобы вписать их в "Extra delete words".
+local function dumpNearby()
+    local root = getRoot()
+    if not root then notify("Character not found") return end
+    local pos = root.Position
+    local out, seen, n = {}, {}, 0
+    for _, d in ipairs(Workspace:GetDescendants()) do
+        if d:IsA("BasePart") and not getCharOwner(d) then
+            local ok, dist = pcall(function() return (d.Position - pos).Magnitude end)
+            if ok and dist <= 50 then
+                local full = d:GetFullName()
+                local key = d.ClassName .. "|" .. full
+                if not seen[key] then
+                    seen[key] = true
+                    n = n + 1
+                    if n > 250 then break end
+                    out[#out + 1] = string.format(
+                        "%s | %s | collide=%s | %.0fx%.0fx%.0f",
+                        d.ClassName, full, tostring(d.CanCollide), d.Size.X, d.Size.Y, d.Size.Z
+                    )
+                end
+            end
+        end
+    end
+    local text = table.concat(out, "\n")
+    if #text > 15000 then text = text:sub(1, 15000) end
+    if type(setclipboard) == "function" then
+        setclipboard(text)
+        notify("Nearby objects copied (" .. #out .. ")")
+    else
+        notify("setclipboard not supported")
+    end
+end
+
 addSection(infoPage, "Debug")
 addButton(infoPage, "Copy Workspace Structure", dumpStructure)
+addButton(infoPage, "Copy Nearby Objects (50 studs)", dumpNearby)
 addButton(infoPage, "Unload Script", function()
     if _G.LiteProjectUnload then _G.LiteProjectUnload() end
 end, true)
@@ -1676,6 +2125,7 @@ _G.LiteProjectUnload = function()
     end
     pcall(function()
         if boost.conn then boost.conn:Disconnect() end
+        if boost.rs then boost.rs:Disconnect() end
         if boost.light then
             restoreBoost() -- alive = false, поэтому повторно буст не применится
         end
@@ -1696,7 +2146,7 @@ task.defer(function()
     notify("Lite Project loaded - RightShift to toggle")
 end)
 
-print("[Swarm Tweaker Lite v5] loaded. RightShift - hide/show menu.")
+print("[Swarm Tweaker Lite v6] loaded. RightShift - hide/show menu.")
 
 ]==]
 pcall(function() writefile("LiteProject.lua", SRC) end)
