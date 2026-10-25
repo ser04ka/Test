@@ -1,6 +1,6 @@
 local SRC = [==[
 -- ============================================================
--- === Swarm Tweaker: Lite Project v7 (SAFE REJOIN) ===
+-- === Lite Project ===
 -- RightShift - скрыть/показать меню
 -- ============================================================
 
@@ -12,6 +12,7 @@ local SCRIPT_URL = ""
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
@@ -70,7 +71,11 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 7,
+    V = 4,
+    FPSBoost = true,
+    HideBees = true,
+    HideTokens = true,
+    HideDecor = true,
     AutoClean = true,
     FPSLimit = true,
     FPS = 60,
@@ -132,13 +137,9 @@ local THEME = {
     TextDim = Color3.fromRGB(140, 140, 150),
     Border = Color3.fromRGB(45, 45, 50),
     ElementBg = Color3.fromRGB(30, 30, 35),
-    Hover = Color3.fromRGB(38, 38, 45),
-    Press = Color3.fromRGB(48, 48, 58),
     TabActiveBg = Color3.fromRGB(40, 40, 45),
     ToggleOff = Color3.fromRGB(45, 45, 50),
     Danger = Color3.fromRGB(190, 60, 75),
-    DangerHover = Color3.fromRGB(207, 76, 91),
-    DangerPress = Color3.fromRGB(160, 48, 62),
     Good = Color3.fromRGB(110, 220, 130),
     Warn = Color3.fromRGB(240, 200, 90),
     Bad = Color3.fromRGB(240, 100, 100)
@@ -257,7 +258,7 @@ local function doRejoinCore(reason, force, trusted)
     REJOIN.busy = true
     REJOIN.last = tick()
 
-    setStatus("rejoining (" .. reason:sub(1, 40) .. ")")
+    setStatus("rejoining: " .. reason:sub(1, 40))
     notify("Rejoining...")
     queueReexecute()
 
@@ -412,10 +413,540 @@ local function updateFPS()
     end)
 end
 
+
+-- ============================================================
+-- === FPS BOOST (с полным восстановлением) ===
+-- ============================================================
+
+local boost = {
+    parts = setmetatable({}, { __mode = "k" }),
+    fx = setmetatable({}, { __mode = "k" }),
+    light = nil,
+    quality = nil,
+    conn = nil,
+    token = 0,
+    restoring = false,
+    hide = setmetatable({}, { __mode = "k" }),
+    names = {},
+    dnames = {},
+    deleted = 0,
+    underY = nil
+}
+
+local FX_CLASSES = {
+    ParticleEmitter = true, Trail = true, Beam = true,
+    Smoke = true, Fire = true, Sparkles = true,
+    PointLight = true, SpotLight = true, SurfaceLight = true,
+    Clouds = true, Highlight = true
+}
+
+-- Нарезка работы по времени: не фризит даже слабое устройство
+local function newSlicer()
+    local t0 = os.clock()
+    return function()
+        if os.clock() - t0 > 0.006 then
+            task.wait()
+            t0 = os.clock()
+        end
+    end
+end
+local POST_CLASSES = {
+    BlurEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true,
+    BloomEffect = true, DepthOfFieldEffect = true
+}
+
+local function inCharacter(obj)
+    local model = obj:FindFirstAncestorOfClass("Model")
+    return model ~= nil and Players:GetPlayerFromCharacter(model) ~= nil
+end
+
+-- Правила скрытия по названиям объектов (подстроки в нижнем регистре).
+-- Объекты НЕ удаляются, а скрываются (Transparency = 1) - это безопасно:
+-- токены остаются собираемыми, ничего не ломается, а при выключении всё возвращается.
+local HIDE_RULES = {
+    { flag = "HideBees", include = { "bee" },
+      exclude = { "bear", "honey", "hive", "shop", "store", "spawn" } },
+    { flag = "HideTokens", include = { "collectible" }, exclude = {} },
+    { flag = "HideDecor",
+      include = {
+          "bubble", "particle", "tree", "cactus", "pumpkin", "strawberr", "clover",
+          "web", "bush", "bamboo", "pineapple", "pepper", "sunflower", "coconut",
+          "palm", "rose", "frog", "fence", "flower", "grass"
+      },
+      exclude = { "crab" } }
+}
+local SKIP_NAMES = {
+    part = true, meshpart = true, union = true, model = true,
+    folder = true, handle = true, mesh = true
+}
+
+local function nameHidesRaw(name)
+    local n = string.lower(name)
+    if SKIP_NAMES[n] then return false end
+    for _, rule in ipairs(HIDE_RULES) do
+        if Config[rule.flag] then
+            local blocked = false
+            for _, x in ipairs(rule.exclude) do
+                if n:find(x, 1, true) then
+                    blocked = true
+                    break
+                end
+            end
+            if not blocked then
+                for _, k in ipairs(rule.include) do
+                    if n:find(k, 1, true) then return true end
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function nameHides(name)
+    local c = boost.names[name]
+    if c == nil then
+        c = nameHidesRaw(name)
+        boost.names[name] = c
+    end
+    return c
+end
+
+-- true, если сам объект или любой его родитель подходит под правила
+-- (персонажи игроков никогда не скрываются). Результаты кэшируются.
+local function hiddenByName(inst)
+    local cache = boost.hide
+    local chain, hit, n = {}, {}, 0
+    local base, isChar = false, false
+    local cur = inst
+
+    while cur and cur ~= Workspace do
+        local c = cache[cur]
+        if c ~= nil then
+            if c == "char" then isChar = true else base = c end
+            break
+        end
+        if cur:IsA("Model") and Players:GetPlayerFromCharacter(cur) then
+            cache[cur] = "char"
+            isChar = true
+            break
+        end
+        n = n + 1
+        chain[n] = cur
+        hit[n] = nameHides(cur.Name)
+        cur = cur.Parent
+    end
+
+    local val = (not isChar) and base or false
+    for i = n, 1, -1 do
+        if isChar then
+            val = false
+        else
+            val = val or hit[i]
+        end
+        cache[chain[i]] = val
+    end
+    return val
+end
+
+-- Всё, что целиком находится глубоко под картой
+local function computeUnderY()
+    local zones = Workspace:FindFirstChild("FlowerZones")
+    if not zones then return nil end
+    local minY = nil
+    for _, z in ipairs(zones:GetChildren()) do
+        if z:IsA("BasePart") then
+            local y = z.Position.Y
+            if minY == nil or y < minY then minY = y end
+        end
+    end
+    if minY then return minY - 60 end
+    return nil
+end
+
+local function underMap(part)
+    local y = boost.underY
+    if not y then return false end
+    local ok, res = pcall(function()
+        return part.Position.Y + part.Size.Y * 0.5 < y
+    end)
+    return ok and res and not inCharacter(part)
+end
+
+-- ============================================================
+-- Реальное УДАЛЕНИЕ декора (деревья, кусты, цветы, заборы и т.д.)
+-- Удалённое возвращается только после перезахода на сервер.
+-- ============================================================
+local DELETE_KEYS = {
+    "tree", "cactus", "pumpkin", "strawberr", "clover", "web", "bush", "bamboo",
+    "pineapple", "pepper", "sunflower", "coconut", "palm", "rose", "frog",
+    "fence", "flower", "grass"
+}
+local DELETE_EXCLUDE = { "crab", "zone", "street" }
+
+-- Контейнеры, внутри которых ничего не удаляем (игровая логика)
+local PROTECTED_ANCESTORS = {
+    "FlowerZones", "Collectibles", "Particles", "Honeycombs", "NPCs", "Monsters", "MonsterSpawners"
+}
+
+local function decorNameMatches(name)
+    local c = boost.dnames[name]
+    if c ~= nil then return c end
+
+    local n = string.lower(name)
+    local res = false
+    if not SKIP_NAMES[n] then
+        local blocked = false
+        for _, x in ipairs(DELETE_EXCLUDE) do
+            if n:find(x, 1, true) then
+                blocked = true
+                break
+            end
+        end
+        if not blocked then
+            for _, k in ipairs(DELETE_KEYS) do
+                if n:find(k, 1, true) then
+                    res = true
+                    break
+                end
+            end
+        end
+    end
+    boost.dnames[name] = res
+    return res
+end
+
+local function isProtected(obj)
+    for _, name in ipairs(PROTECTED_ANCESTORS) do
+        if obj.Name == name or obj:FindFirstAncestor(name) then return true end
+    end
+    if Players:GetPlayerFromCharacter(obj) or inCharacter(obj) then return true end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        local c = pl.Character
+        if c and (obj == c or obj:IsAncestorOf(c)) then return true end
+    end
+    -- NPC, монстры и всё, где есть Humanoid
+    if obj:IsA("Model") or obj:IsA("Folder") then
+        if obj:FindFirstChildWhichIsA("Humanoid", true) then return true end
+    end
+    return false
+end
+
+-- Большие твёрдые части (земля поля) не удаляем, чтобы не провалиться под карту
+local function isFloorPart(p)
+    return p.CanCollide and math.max(p.Size.X, p.Size.Z) >= 25
+end
+
+local function safeToDestroy(obj)
+    if obj:IsA("BasePart") then
+        return not isFloorPart(obj)
+    end
+    for _, d in ipairs(obj:GetDescendants()) do
+        if d:IsA("BasePart") and isFloorPart(d) then return false end
+    end
+    return true
+end
+
+-- true = объект удалён (или уже удалён) и дальше его обрабатывать не нужно
+local function decorDelete(obj)
+    if not obj.Parent then return true end
+    if not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Folder")) then return false end
+
+    local parent = obj.Parent
+    local matched = decorNameMatches(obj.Name)
+
+    -- содержимое верхнеуровневой папки вроде "Flowers" удаляем, саму папку оставляем
+    if not matched and parent and parent.Parent == Workspace and parent:IsA("Folder")
+        and decorNameMatches(parent.Name) then
+        matched = true
+    end
+    if not matched then return false end
+    if obj:IsA("Folder") and parent == Workspace then return false end
+
+    if isProtected(obj) or not safeToDestroy(obj) then return false end
+
+    boost.deleted = boost.deleted + 1
+    obj:Destroy()
+    return true
+end
+
+local function processObj(obj)
+    if obj:IsA("Terrain") then return end
+
+    if Config.HideDecor and decorDelete(obj) then return end
+
+    if obj:IsA("BasePart") then
+        local s = boost.parts[obj]
+        if not s then
+            s = { obj.Material, obj.Reflectance, obj.CastShadow }
+            boost.parts[obj] = s
+        end
+        obj.CastShadow = false
+        obj.Reflectance = 0
+        obj.Material = Enum.Material.Plastic
+
+        if s[4] == nil and obj:IsA("MeshPart") and not inCharacter(obj) then
+            s[4] = obj.TextureID
+            obj.TextureID = ""
+        end
+
+        if hiddenByName(obj) or (Config.HideDecor and underMap(obj)) then
+            if s[5] == nil then s[5] = obj.Transparency end
+            obj.Transparency = 1
+        end
+    elseif FX_CLASSES[obj.ClassName] then
+        if boost.fx[obj] == nil then boost.fx[obj] = { "Enabled", obj.Enabled } end
+        obj.Enabled = false
+    elseif obj:IsA("Decal") or obj:IsA("Texture") then
+        if boost.fx[obj] == nil and not inCharacter(obj) then
+            boost.fx[obj] = { "Transparency", obj.Transparency }
+            obj.Transparency = 1
+        end
+    elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
+        if boost.fx[obj] == nil and hiddenByName(obj) then
+            boost.fx[obj] = { "Enabled", obj.Enabled }
+            obj.Enabled = false
+        end
+    end
+end
+
+local function applyBoost()
+    if boost.restoring then return end
+
+    boost.token = boost.token + 1
+    local token = boost.token
+
+    boost.hide = setmetatable({}, { __mode = "k" })
+    boost.names, boost.dnames = {}, {}
+    boost.underY = computeUnderY()
+
+    if not boost.light then
+        boost.light = {}
+        pcall(function()
+            boost.light.GlobalShadows = Lighting.GlobalShadows
+            boost.light.FogEnd = Lighting.FogEnd
+            boost.light.ShadowSoftness = Lighting.ShadowSoftness
+        end)
+        pcall(function()
+            local t = Workspace.Terrain
+            boost.light.Water = { t.WaterWaveSize, t.WaterWaveSpeed, t.WaterReflectance }
+        end)
+        pcall(function() boost.light.Decoration = Workspace.Terrain.Decoration end)
+        pcall(function() boost.quality = settings().Rendering.QualityLevel end)
+    end
+
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.ShadowSoftness = 0
+    end)
+    pcall(function()
+        local t = Workspace.Terrain
+        t.WaterWaveSize = 0
+        t.WaterWaveSpeed = 0
+        t.WaterReflectance = 0
+    end)
+    pcall(function() Workspace.Terrain.Decoration = false end)
+
+    for _, v in ipairs(Lighting:GetDescendants()) do
+        pcall(function()
+            if POST_CLASSES[v.ClassName] then
+                if boost.fx[v] == nil then boost.fx[v] = { "Enabled", v.Enabled } end
+                v.Enabled = false
+            elseif v:IsA("Atmosphere") then
+                if boost.fx[v] == nil then boost.fx[v] = { "Density", v.Density } end
+                v.Density = 0
+            end
+        end)
+    end
+
+    -- Обработка карты кусками, чтобы не фризить слабое устройство
+    task.spawn(function()
+        local step = newSlicer()
+        for _, v in ipairs(Workspace:GetDescendants()) do
+            if not alive or boost.token ~= token or not Config.FPSBoost then return end
+            pcall(processObj, v)
+            step()
+        end
+    end)
+
+    if boost.conn then boost.conn:Disconnect() end
+
+    local queue, qh, qt = {}, 1, 0
+    boost.conn = Workspace.DescendantAdded:Connect(function(v)
+        qt = qt + 1
+        queue[qt] = v
+    end)
+
+    -- один воркер обрабатывает новые объекты (токены, частицы) в рамках бюджета времени
+    task.spawn(function()
+        while alive and boost.token == token and Config.FPSBoost do
+            local t0 = os.clock()
+            while qh <= qt and os.clock() - t0 < 0.004 do
+                local v = queue[qh]
+                queue[qh] = nil
+                qh = qh + 1
+                if v and v.Parent then pcall(processObj, v) end
+            end
+            if qh > qt then
+                qh, qt = 1, 0
+                task.wait(0.25)
+            else
+                task.wait()
+            end
+        end
+    end)
+end
+
+local function restoreBoost()
+    boost.token = boost.token + 1
+    boost.restoring = true
+    boost.hide = setmetatable({}, { __mode = "k" })
+    boost.names, boost.dnames = {}, {}
+
+    if boost.conn then
+        boost.conn:Disconnect()
+        boost.conn = nil
+    end
+
+    if boost.light then
+        local l = boost.light
+        pcall(function()
+            if l.GlobalShadows ~= nil then Lighting.GlobalShadows = l.GlobalShadows end
+            if l.FogEnd ~= nil then Lighting.FogEnd = l.FogEnd end
+            if l.ShadowSoftness ~= nil then Lighting.ShadowSoftness = l.ShadowSoftness end
+        end)
+        pcall(function()
+            local t = Workspace.Terrain
+            if l.Water then
+                t.WaterWaveSize = l.Water[1]
+                t.WaterWaveSpeed = l.Water[2]
+                t.WaterReflectance = l.Water[3]
+            end
+        end)
+        pcall(function()
+            if l.Decoration ~= nil then Workspace.Terrain.Decoration = l.Decoration end
+        end)
+        boost.light = nil
+    end
+    pcall(function()
+        if boost.quality then settings().Rendering.QualityLevel = boost.quality end
+    end)
+    boost.quality = nil
+
+    task.spawn(function()
+        local step = newSlicer()
+        for part, s in pairs(boost.parts) do
+            if part and part.Parent then
+                pcall(function()
+                    part.Material = s[1]
+                    part.Reflectance = s[2]
+                    part.CastShadow = s[3]
+                    if s[4] ~= nil then part.TextureID = s[4] end
+                    if s[5] ~= nil then part.Transparency = s[5] end
+                end)
+            end
+            boost.parts[part] = nil
+            step()
+        end
+
+        for obj, s in pairs(boost.fx) do
+            if obj and obj.Parent then
+                pcall(function() obj[s[1]] = s[2] end)
+            end
+            boost.fx[obj] = nil
+            step()
+        end
+
+        boost.restoring = false
+        -- если за время восстановления буст включили снова - применяем
+        if alive and Config.FPSBoost then
+            applyBoost()
+        end
+    end)
+end
+
+-- ============================================================
+-- === MEMORY CLEANER (раз в 30 минут) ===
+-- ============================================================
+
+local CLEAN_INTERVAL = 30 * 60
+local Stats = game:GetService("Stats")
+local memory = {
+    nextAt = os.clock() + CLEAN_INTERVAL,
+    cleaning = false,
+    lastText = "Last clean: not yet"
+}
+
+local function totalMemoryMb()
+    local ok, v = pcall(function() return Stats:GetTotalMemoryUsageMb() end)
+    if ok and type(v) == "number" then return v end
+    return 0
+end
+
+local function cleanMemory()
+    if memory.cleaning then return end
+    memory.cleaning = true
+
+    local ok, err = pcall(function()
+        local luaBefore = collectgarbage("count") / 1024
+        local totalBefore = totalMemoryMb()
+
+        -- 1) собственные кэши скрипта
+        boost.names, boost.dnames = {}, {}
+        boost.hide = setmetatable({}, { __mode = "k" })
+
+        -- 2) записи о давно удалённых объектах (чтобы таблицы не росли бесконечно)
+        local deadParts, deadFx = {}, {}
+        for part in pairs(boost.parts) do
+            if not part.Parent then deadParts[#deadParts + 1] = part end
+        end
+        for obj in pairs(boost.fx) do
+            if not obj.Parent then deadFx[#deadFx + 1] = obj end
+        end
+        local step = newSlicer()
+        for _, part in ipairs(deadParts) do
+            boost.parts[part] = nil
+            step()
+        end
+        for _, obj in ipairs(deadFx) do
+            boost.fx[obj] = nil
+            step()
+        end
+
+        -- 3) полная сборка мусора в два прохода (второй добирает то, что освободил первый)
+        task.wait()
+        collectgarbage("collect")
+        task.wait(0.25)
+        collectgarbage("collect")
+        task.wait(0.25)
+
+        local luaAfter = collectgarbage("count") / 1024
+        local totalAfter = totalMemoryMb()
+        local freedLua = math.max(0, luaBefore - luaAfter)
+
+        memory.lastText = string.format(
+            "Last clean: -%.1f MB Lua, total %.0f to %.0f MB",
+            freedLua, totalBefore, totalAfter
+        )
+        notify(string.format("Memory cleaned: -%.1f MB", freedLua))
+    end)
+
+    if not ok then
+        memory.lastText = "Last clean: error"
+    end
+    memory.nextAt = os.clock() + CLEAN_INTERVAL
+    memory.cleaning = false
+end
+
 task.spawn(function()
-    while alive and task.wait(45) do
+    while alive and task.wait(5) do
         if Config.AutoClean then
-            pcall(function() collectgarbage("collect") end)
+            if os.clock() >= memory.nextAt then
+                cleanMemory()
+            end
+        else
+            memory.nextAt = os.clock() + CLEAN_INTERVAL
         end
     end
 end)
@@ -432,44 +963,7 @@ local function mk(class, props, parent)
 end
 
 local function corner(obj, r)
-    return mk("UICorner", { CornerRadius = UDim.new(0, r or 10) }, obj)
-end
-
-local function tw(obj, t, props)
-    TweenService:Create(obj, TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
-end
-
-local function isPress(input)
-    return input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch
-end
-
--- Отклик на нажатие: элемент слегка "вдавливается" и меняет цвет.
--- hit - то, что ловит нажатие, target - то, что анимируется.
--- Цвета можно не передавать (тогда будет только эффект масштаба).
-local function addPressFx(hit, target, baseColor, hoverColor, pressColor)
-    local sc = target:FindFirstChildOfClass("UIScale") or mk("UIScale", { Scale = 1 }, target)
-    local pressed = false
-
-    hit.InputBegan:Connect(function(input)
-        if isPress(input) then
-            pressed = true
-            tw(sc, 0.07, { Scale = 0.96 })
-            if pressColor then tw(target, 0.07, { BackgroundColor3 = pressColor }) end
-        elseif input.UserInputType == Enum.UserInputType.MouseMovement and hoverColor and not pressed then
-            tw(target, 0.12, { BackgroundColor3 = hoverColor })
-        end
-    end)
-
-    hit.InputEnded:Connect(function(input)
-        if isPress(input) then
-            pressed = false
-            tw(sc, 0.14, { Scale = 1 })
-            if baseColor then tw(target, 0.14, { BackgroundColor3 = baseColor }) end
-        elseif input.UserInputType == Enum.UserInputType.MouseMovement and baseColor and not pressed then
-            tw(target, 0.12, { BackgroundColor3 = baseColor })
-        end
-    end)
+    return mk("UICorner", { CornerRadius = UDim.new(0, r or 8) }, obj)
 end
 
 local gui = mk("ScreenGui", {
@@ -486,7 +980,7 @@ notify = function(text)
     if lastToast then lastToast:Destroy() end
 
     local toast = mk("TextLabel", {
-        Size = UDim2.fromOffset(250, 38),
+        Size = UDim2.fromOffset(250, 36),
         AnchorPoint = Vector2.new(1, 1),
         Position = UDim2.new(1, 270, 1, -16),
         BackgroundColor3 = THEME.ElementBg,
@@ -496,11 +990,13 @@ notify = function(text)
         Font = Enum.Font.GothamMedium,
         TextSize = 12
     }, gui)
-    corner(toast, 12)
+    corner(toast, 8)
     mk("UIStroke", { Color = THEME.Accent, Thickness = 1 }, toast)
     lastToast = toast
 
-    tw(toast, 0.25, { Position = UDim2.new(1, -16, 1, -16) })
+    TweenService:Create(toast, TweenInfo.new(0.25, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(1, -16, 1, -16)
+    }):Play()
 
     task.delay(3, function()
         if toast.Parent then
@@ -521,35 +1017,108 @@ local main = mk("Frame", {
     Position = UDim2.fromScale(0.5, 0.5),
     BackgroundColor3 = THEME.Bg,
     BorderSizePixel = 0,
-    Visible = false
+    Visible = false,
+    ClipsDescendants = true
 }, gui)
-corner(main, 18)
+corner(main, 10)
 mk("UIStroke", { Color = THEME.Border, Thickness = 1 }, main)
 local mainScale = mk("UIScale", { Scale = 1 }, main)
 
 local openBtn = mk("TextButton", {
     Name = "LiteProjectMinGui",
-    Size = UDim2.fromOffset(48, 48),
+    Size = UDim2.fromOffset(54, 54),
     AnchorPoint = Vector2.new(0.5, 0),
     Position = UDim2.new(0.5, 0, 0, 30),
-    BackgroundColor3 = THEME.Bg,
-    Text = "LP",
-    TextColor3 = THEME.Accent,
-    Font = Enum.Font.GothamBold,
-    TextSize = 15,
+    BackgroundTransparency = 1,
+    Text = "",
     AutoButtonColor = false,
     Visible = true
 }, gui)
-corner(openBtn, 24)
-mk("UIStroke", { Color = THEME.Accent, Thickness = 1.5 }, openBtn)
-addPressFx(openBtn, openBtn)
+
+-- градиентное кольцо (медленно вращается)
+local logoRing = mk("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+    BorderSizePixel = 0
+}, openBtn)
+corner(logoRing, 27)
+local ringGradient = mk("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(232, 121, 249)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(110, 140, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(232, 121, 249))
+    }),
+    Rotation = 0
+}, logoRing)
+
+local logoInner = mk("Frame", {
+    Size = UDim2.new(1, -6, 1, -6),
+    Position = UDim2.fromOffset(3, 3),
+    BackgroundColor3 = Color3.fromRGB(16, 16, 20),
+    BorderSizePixel = 0
+}, logoRing)
+corner(logoInner, 24)
+
+local logoText = mk("TextLabel", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+    Text = "LP",
+    TextColor3 = Color3.fromRGB(255, 255, 255),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 19
+}, logoInner)
+mk("UIGradient", {
+    Color = ColorSequence.new(Color3.fromRGB(245, 160, 255), Color3.fromRGB(120, 150, 255)),
+    Rotation = 45
+}, logoText)
+
+-- индикатор состояния: зелёный - перезаход активен, жёлтый - включается, красный - выключен
+local logoDot = mk("Frame", {
+    Size = UDim2.fromOffset(13, 13),
+    Position = UDim2.new(1, -13, 1, -13),
+    BackgroundColor3 = THEME.Warn,
+    BorderSizePixel = 0,
+    ZIndex = 3
+}, openBtn)
+corner(logoDot, 7)
+mk("UIStroke", { Color = THEME.Bg, Thickness = 2 }, logoDot)
+
+local logoScale = mk("UIScale", { Scale = 1 }, openBtn)
+openBtn.MouseButton1Down:Connect(function()
+    TweenService:Create(logoScale, TweenInfo.new(0.08), { Scale = 0.9 }):Play()
+end)
+local function logoRelease()
+    TweenService:Create(logoScale, TweenInfo.new(0.12), { Scale = 1 }):Play()
+end
+openBtn.MouseButton1Up:Connect(logoRelease)
+openBtn.MouseLeave:Connect(logoRelease)
+
+task.spawn(function()
+    local tick_ = 0
+    while alive do
+        task.wait(0.05)
+        if openBtn.Visible then
+            ringGradient.Rotation = (ringGradient.Rotation + 4) % 360
+            tick_ = tick_ + 1
+            if tick_ % 20 == 0 then
+                if not Config.AutoRejoin then
+                    logoDot.BackgroundColor3 = THEME.Bad
+                elseif REJOIN.armed then
+                    logoDot.BackgroundColor3 = THEME.Good
+                else
+                    logoDot.BackgroundColor3 = THEME.Warn
+                end
+            end
+        end
+    end
+end)
 
 local function showMain(show)
     main.Visible = show
     openBtn.Visible = not show
     if show then
         mainScale.Scale = 0.92
-        tw(mainScale, 0.18, { Scale = 1 })
+        TweenService:Create(mainScale, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Scale = 1 }):Play()
     end
 end
 
@@ -559,7 +1128,8 @@ local function makeDraggable(handle, target, onTap)
 
     handle.InputBegan:Connect(function(input)
         if isDraggingSlider then return end
-        if isPress(input) then
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = target.Position
@@ -587,25 +1157,49 @@ local function makeDraggable(handle, target, onTap)
     end))
 end
 
--- Все панели лежат внутри главного окна с отступом 10px, поэтому
--- скруглённые углы нигде не обрезаются и не торчат за края окна.
+-- Верхняя панель
 local topBar = mk("Frame", {
-    Size = UDim2.new(1, -20, 0, 44),
-    Position = UDim2.fromOffset(10, 10),
+    Size = UDim2.new(1, 0, 0, 44),
     BackgroundColor3 = THEME.Sidebar,
     BorderSizePixel = 0
 }, main)
-corner(topBar, 14)
 mk("UIGradient", {
     Color = ColorSequence.new(Color3.fromRGB(14, 14, 16), Color3.fromRGB(52, 26, 60)),
     Rotation = 0
 }, topBar)
 
+local badge = mk("Frame", {
+    Size = UDim2.fromOffset(28, 28),
+    Position = UDim2.fromOffset(14, 8),
+    BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+    BorderSizePixel = 0
+}, topBar)
+corner(badge, 14)
+mk("UIGradient", {
+    Color = ColorSequence.new(Color3.fromRGB(232, 121, 249), Color3.fromRGB(110, 140, 255)),
+    Rotation = 45
+}, badge)
+local badgeInner = mk("Frame", {
+    Size = UDim2.new(1, -4, 1, -4),
+    Position = UDim2.fromOffset(2, 2),
+    BackgroundColor3 = Color3.fromRGB(16, 16, 20),
+    BorderSizePixel = 0
+}, badge)
+corner(badgeInner, 12)
 mk("TextLabel", {
-    Size = UDim2.new(1, -220, 0, 20),
-    Position = UDim2.fromOffset(16, 5),
+    Size = UDim2.fromScale(1, 1),
     BackgroundTransparency = 1,
-    Text = "★ Lite Project",
+    Text = "LP",
+    TextColor3 = THEME.Accent,
+    Font = Enum.Font.GothamBlack,
+    TextSize = 11
+}, badgeInner)
+
+mk("TextLabel", {
+    Size = UDim2.new(1, -240, 0, 20),
+    Position = UDim2.fromOffset(52, 5),
+    BackgroundTransparency = 1,
+    Text = "Lite Project",
     TextColor3 = THEME.Text,
     Font = Enum.Font.GothamBold,
     TextSize = 15,
@@ -613,8 +1207,8 @@ mk("TextLabel", {
 }, topBar)
 
 mk("TextLabel", {
-    Size = UDim2.new(1, -220, 0, 14),
-    Position = UDim2.fromOffset(16, 24),
+    Size = UDim2.new(1, -240, 0, 14),
+    Position = UDim2.fromOffset(52, 25),
     BackgroundTransparency = 1,
     Text = "Made for low-end devices",
     TextColor3 = THEME.TextDim,
@@ -625,12 +1219,12 @@ mk("TextLabel", {
 
 -- Живой счётчик FPS
 local fpsPill = mk("Frame", {
-    Size = UDim2.fromOffset(76, 26),
-    Position = UDim2.new(1, -132, 0.5, -13),
+    Size = UDim2.fromOffset(74, 24),
+    Position = UDim2.new(1, -126, 0, 10),
     BackgroundColor3 = THEME.Bg,
     BorderSizePixel = 0
 }, topBar)
-corner(fpsPill, 13)
+corner(fpsPill, 12)
 mk("UIStroke", { Color = THEME.Border, Thickness = 1 }, fpsPill)
 
 local fpsLabel = mk("TextLabel", {
@@ -659,22 +1253,27 @@ do
 end
 
 local minimizeBtn = mk("TextButton", {
-    Size = UDim2.fromOffset(32, 32),
-    Position = UDim2.new(1, -42, 0.5, -16),
+    Size = UDim2.fromOffset(30, 30),
+    Position = UDim2.new(1, -42, 0, 7),
     BackgroundColor3 = THEME.ElementBg,
     Text = "–",
     TextColor3 = THEME.Text,
     Font = Enum.Font.GothamBold,
-    TextSize = 18,
-    AutoButtonColor = false
+    TextSize = 16
 }, topBar)
-corner(minimizeBtn, 10)
-addPressFx(minimizeBtn, minimizeBtn, THEME.ElementBg, THEME.Hover, THEME.Press)
+corner(minimizeBtn, 8)
+
+mk("Frame", {
+    Size = UDim2.new(1, 0, 0, 1),
+    Position = UDim2.fromOffset(0, 44),
+    BackgroundColor3 = THEME.Border,
+    BorderSizePixel = 0
+}, main)
 
 makeDraggable(topBar, main)
 makeDraggable(openBtn, openBtn, function() showMain(true) end)
 
-minimizeBtn.Activated:Connect(function() showMain(false) end)
+minimizeBtn.MouseButton1Click:Connect(function() showMain(false) end)
 
 track(UserInputService.InputBegan:Connect(function(input, gp)
     if not gp and input.KeyCode == Enum.KeyCode.RightShift and gui.Parent then
@@ -684,20 +1283,19 @@ end))
 
 -- Боковая панель + контент
 local sidebar = mk("Frame", {
-    Size = UDim2.new(0, 124, 1, -74),
-    Position = UDim2.fromOffset(10, 64),
+    Size = UDim2.new(0, 130, 1, -45),
+    Position = UDim2.fromOffset(0, 45),
     BackgroundColor3 = THEME.Sidebar,
     BorderSizePixel = 0
 }, main)
-corner(sidebar, 14)
 mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, sidebar)
 mk("UIPadding", {
-    PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)
+    PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10)
 }, sidebar)
 
 local content = mk("Frame", {
-    Size = UDim2.new(1, -144, 1, -74),
-    Position = UDim2.fromOffset(140, 64),
+    Size = UDim2.new(1, -130, 1, -45),
+    Position = UDim2.fromOffset(130, 45),
     BackgroundTransparency = 1
 }, main)
 
@@ -709,17 +1307,14 @@ local function selectTab(name)
     end
     for n, btn in pairs(tabButtons) do
         local active = (n == name)
-        tw(btn, 0.15, {
-            BackgroundColor3 = active and THEME.TabActiveBg or THEME.Sidebar,
-            TextColor3 = active and THEME.Text or THEME.TextDim
-        })
-        btn:FindFirstChild("Bar").Visible = active
+        btn.BackgroundColor3 = active and THEME.TabActiveBg or THEME.Sidebar
+        btn.TextColor3 = active and THEME.Accent or THEME.TextDim
     end
 end
 
 local function createTab(name, order)
     local btn = mk("TextButton", {
-        Size = UDim2.new(1, 0, 0, 38),
+        Size = UDim2.new(1, 0, 0, 36),
         BackgroundColor3 = THEME.Sidebar,
         BorderSizePixel = 0,
         Text = "   " .. name,
@@ -730,18 +1325,7 @@ local function createTab(name, order)
         AutoButtonColor = false,
         LayoutOrder = order
     }, sidebar)
-    corner(btn, 10)
-    addPressFx(btn, btn)
-
-    local bar = mk("Frame", {
-        Name = "Bar",
-        Size = UDim2.fromOffset(3, 18),
-        Position = UDim2.new(0, 4, 0.5, -9),
-        BackgroundColor3 = THEME.Accent,
-        BorderSizePixel = 0,
-        Visible = false
-    }, btn)
-    corner(bar, 2)
+    corner(btn, 8)
 
     local page = mk("ScrollingFrame", {
         Size = UDim2.fromScale(1, 1),
@@ -755,13 +1339,13 @@ local function createTab(name, order)
     }, content)
     mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, page)
     mk("UIPadding", {
-        PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2),
-        PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8)
+        PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 16),
+        PaddingRight = UDim.new(0, 18), PaddingBottom = UDim.new(0, 12)
     }, page)
 
     pages[name] = page
     tabButtons[name] = btn
-    btn.Activated:Connect(function() selectTab(name) end)
+    btn.MouseButton1Click:Connect(function() selectTab(name) end)
     return page
 end
 
@@ -791,18 +1375,17 @@ local function addLabel(page, text)
     }, page)
 end
 
--- Переключатель: нажимается вся строка целиком, а не только маленький тумблер
 local function addToggle(page, text, key, desc, callback)
     local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, desc and 56 or 44),
+        Size = UDim2.new(1, 0, 0, desc and 54 or 42),
         BackgroundColor3 = THEME.ElementBg,
         BorderSizePixel = 0
     }, page)
-    corner(row, 12)
+    corner(row, 8)
 
     mk("TextLabel", {
-        Size = UDim2.new(1, -76, 0, 20),
-        Position = UDim2.fromOffset(14, desc and 9 or 12),
+        Size = UDim2.new(1, -70, 0, 20),
+        Position = UDim2.fromOffset(12, desc and 8 or 11),
         BackgroundTransparency = 1,
         Text = text,
         TextColor3 = THEME.Text,
@@ -813,8 +1396,8 @@ local function addToggle(page, text, key, desc, callback)
 
     if desc then
         mk("TextLabel", {
-            Size = UDim2.new(1, -76, 0, 16),
-            Position = UDim2.fromOffset(14, 29),
+            Size = UDim2.new(1, -70, 0, 16),
+            Position = UDim2.fromOffset(12, 28),
             BackgroundTransparency = 1,
             Text = desc,
             TextColor3 = THEME.TextDim,
@@ -824,40 +1407,35 @@ local function addToggle(page, text, key, desc, callback)
         }, row)
     end
 
-    local sw = mk("Frame", {
-        Size = UDim2.fromOffset(44, 24),
-        Position = UDim2.new(1, -58, 0.5, -12),
+    local sw = mk("TextButton", {
+        Size = UDim2.fromOffset(42, 22),
+        Position = UDim2.new(1, -54, 0.5, -11),
+        Text = "",
+        AutoButtonColor = false,
         BorderSizePixel = 0,
         BackgroundColor3 = Config[key] and THEME.Accent or THEME.ToggleOff
     }, row)
-    corner(sw, 12)
+    corner(sw, 11)
 
     local knob = mk("Frame", {
         Size = UDim2.fromOffset(18, 18),
-        Position = Config[key] and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+        Position = Config[key] and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9),
         BackgroundColor3 = Config[key] and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 150),
         BorderSizePixel = 0
     }, sw)
     corner(knob, 9)
 
-    local hit = mk("TextButton", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 5
-    }, row)
-    addPressFx(hit, row, THEME.ElementBg, THEME.Hover, THEME.Press)
-
-    hit.Activated:Connect(function()
+    sw.MouseButton1Click:Connect(function()
         Config[key] = not Config[key]
         local on = Config[key]
 
-        tw(sw, 0.18, { BackgroundColor3 = on and THEME.Accent or THEME.ToggleOff })
-        tw(knob, 0.18, {
-            Position = on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+        TweenService:Create(sw, TweenInfo.new(0.18), {
+            BackgroundColor3 = on and THEME.Accent or THEME.ToggleOff
+        }):Play()
+        TweenService:Create(knob, TweenInfo.new(0.18), {
+            Position = on and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9),
             BackgroundColor3 = on and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 150)
-        })
+        }):Play()
 
         saveConfig()
         if callback then callback(on) end
@@ -868,15 +1446,15 @@ end
 
 local function addSlider(page, text, min, max, key, callback)
     local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 66),
+        Size = UDim2.new(1, 0, 0, 60),
         BackgroundColor3 = THEME.ElementBg,
         BorderSizePixel = 0
     }, page)
-    corner(row, 12)
+    corner(row, 8)
 
     mk("TextLabel", {
-        Size = UDim2.new(1, -90, 0, 20),
-        Position = UDim2.fromOffset(14, 8),
+        Size = UDim2.new(1, -80, 0, 20),
+        Position = UDim2.fromOffset(12, 8),
         BackgroundTransparency = 1,
         Text = text,
         TextColor3 = THEME.Text,
@@ -887,7 +1465,7 @@ local function addSlider(page, text, min, max, key, callback)
 
     local valLabel = mk("TextLabel", {
         Size = UDim2.fromOffset(60, 20),
-        Position = UDim2.new(1, -74, 0, 8),
+        Position = UDim2.new(1, -72, 0, 8),
         BackgroundTransparency = 1,
         Text = tostring(Config[key]),
         TextColor3 = THEME.Accent,
@@ -896,10 +1474,9 @@ local function addSlider(page, text, min, max, key, callback)
         TextXAlignment = Enum.TextXAlignment.Right
     }, row)
 
-    -- большая зона нажатия, чтобы удобно попадать пальцем
     local hit = mk("TextButton", {
-        Size = UDim2.new(1, -28, 0, 32),
-        Position = UDim2.fromOffset(14, 28),
+        Size = UDim2.new(1, -24, 0, 24),
+        Position = UDim2.fromOffset(12, 30),
         BackgroundTransparency = 1,
         Text = "",
         AutoButtonColor = false
@@ -922,13 +1499,12 @@ local function addSlider(page, text, min, max, key, callback)
     corner(fill, 3)
 
     local knob = mk("Frame", {
-        Size = UDim2.fromOffset(18, 18),
-        Position = UDim2.new(rel0, -9, 0.5, -9),
+        Size = UDim2.fromOffset(16, 16),
+        Position = UDim2.new(rel0, -8, 0.5, -8),
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
         BorderSizePixel = 0
     }, hit)
-    corner(knob, 9)
-    local knobScale = mk("UIScale", { Scale = 1 }, knob)
+    corner(knob, 8)
 
     local dragging = false
 
@@ -938,7 +1514,7 @@ local function addSlider(page, text, min, max, key, callback)
         local value = math.floor(min + (max - min) * rel + 0.5)
         Config[key] = value
         fill.Size = UDim2.fromScale(rel, 1)
-        knob.Position = UDim2.new(rel, -9, 0.5, -9)
+        knob.Position = UDim2.new(rel, -8, 0.5, -8)
         valLabel.Text = tostring(value)
         if callback then callback(value) end
     end
@@ -948,15 +1524,15 @@ local function addSlider(page, text, min, max, key, callback)
         Config[key] = value
         local rel = (value - min) / (max - min)
         fill.Size = UDim2.fromScale(rel, 1)
-        knob.Position = UDim2.new(rel, -9, 0.5, -9)
+        knob.Position = UDim2.new(rel, -8, 0.5, -8)
         valLabel.Text = tostring(value)
     end
 
     hit.InputBegan:Connect(function(input)
-        if isPress(input) then
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             isDraggingSlider = true
-            tw(knobScale, 0.1, { Scale = 1.25 })
             setFromX(input.Position.X)
         end
     end)
@@ -970,10 +1546,11 @@ local function addSlider(page, text, min, max, key, callback)
     end))
 
     track(UserInputService.InputEnded:Connect(function(input)
-        if dragging and isPress(input) then
+        if dragging
+            and (input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch) then
             dragging = false
             isDraggingSlider = false
-            tw(knobScale, 0.12, { Scale = 1 })
             saveConfig()
         end
     end))
@@ -984,7 +1561,7 @@ end
 -- Быстрые кнопки-значения (чипы)
 local function addChips(page, values, labels, onPick, getCurrent)
     local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 36),
+        Size = UDim2.new(1, 0, 0, 34),
         BackgroundTransparency = 1
     }, page)
     mk("UIListLayout", {
@@ -997,10 +1574,8 @@ local function addChips(page, values, labels, onPick, getCurrent)
     local function refresh()
         for v, b in pairs(chips) do
             local on = (getCurrent() == v)
-            tw(b, 0.12, {
-                BackgroundColor3 = on and THEME.Accent or THEME.ElementBg,
-                TextColor3 = on and Color3.fromRGB(20, 20, 24) or THEME.Text
-            })
+            b.BackgroundColor3 = on and THEME.Accent or THEME.ElementBg
+            b.TextColor3 = on and Color3.fromRGB(20, 20, 24) or THEME.Text
         end
     end
 
@@ -1017,10 +1592,9 @@ local function addChips(page, values, labels, onPick, getCurrent)
             AutoButtonColor = false,
             LayoutOrder = i
         }, row)
-        corner(b, 10)
-        addPressFx(b, b)
+        corner(b, 8)
         chips[v] = b
-        b.Activated:Connect(function()
+        b.MouseButton1Click:Connect(function()
             onPick(v)
             refresh()
         end)
@@ -1031,23 +1605,18 @@ local function addChips(page, values, labels, onPick, getCurrent)
 end
 
 local function addButton(page, text, callback, danger)
-    local base = danger and THEME.Danger or THEME.ElementBg
-    local hover = danger and THEME.DangerHover or THEME.Hover
-    local press = danger and THEME.DangerPress or THEME.Press
-
     local btn = mk("TextButton", {
-        Size = UDim2.new(1, 0, 0, 40),
-        BackgroundColor3 = base,
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundColor3 = danger and THEME.Danger or THEME.ElementBg,
         BorderSizePixel = 0,
         Text = text,
         TextColor3 = THEME.Text,
         Font = Enum.Font.GothamMedium,
         TextSize = 13,
-        AutoButtonColor = false
+        AutoButtonColor = true
     }, page)
-    corner(btn, 12)
-    addPressFx(btn, btn, base, hover, press)
-    btn.Activated:Connect(callback)
+    corner(btn, 8)
+    btn.MouseButton1Click:Connect(callback)
     return btn
 end
 
@@ -1058,7 +1627,7 @@ local function addGrid(page)
         BackgroundTransparency = 1
     }, page)
     mk("UIGridLayout", {
-        CellSize = UDim2.new(0.5, -4, 0, 36),
+        CellSize = UDim2.new(0.5, -4, 0, 34),
         CellPadding = UDim2.fromOffset(8, 8),
         SortOrder = Enum.SortOrder.LayoutOrder
     }, frame)
@@ -1071,8 +1640,47 @@ end
 
 -- RENDER
 local renderPage = createTab("Render", 1)
+addSection(renderPage, "Performance")
+addToggle(renderPage, "FPS Boost", "FPSBoost", "Лёгкая графика: без текстур, теней, света, частиц", function(on)
+    if on then applyBoost() else restoreBoost() end
+    if on then
+        notify("FPS Boost: ON")
+    elseif boost.deleted > 0 then
+        notify("FPS Boost: OFF. Удалённый декор вернётся после перезахода")
+    else
+        notify("FPS Boost: OFF")
+    end
+end)
+addSection(renderPage, "What to hide")
+local function reapplyHide()
+    if Config.FPSBoost then restoreBoost() end -- восстановит и сразу применит заново
+end
+addToggle(renderPage, "Hide Bees", "HideBees", "Все пчёлы, включая декоративных", reapplyHide)
+addToggle(renderPage, "Hide Tokens", "HideTokens", "Токены невидимы, но собираются", reapplyHide)
+addToggle(renderPage, "Delete Map Decor", "HideDecor", "Удаляет деревья, кусты, цветы и заборы до перезахода", function(on)
+    reapplyHide()
+    if not on and boost.deleted > 0 then
+        notify("Удалённое вернётся после перезахода")
+    end
+end)
 addSection(renderPage, "Memory")
-addToggle(renderPage, "Auto Clear Memory", "AutoClean", "Очистка мусора каждые 45 сек")
+addToggle(renderPage, "Auto Clean Memory", "AutoClean", "Полная очистка каждые 30 минут")
+local memLabel = addLabel(renderPage, "Memory: ...")
+addButton(renderPage, "Clean Memory Now", function()
+    task.spawn(cleanMemory)
+end)
+task.spawn(function()
+    while alive and task.wait(2) do
+        if main.Visible and memLabel.Parent then
+            local mins = math.max(0, math.ceil((memory.nextAt - os.clock()) / 60))
+            local nextText = Config.AutoClean and ("Next clean in " .. mins .. " min") or "Auto clean is off"
+            memLabel.Text = string.format(
+                "Memory: %.0f MB (Lua %.0f MB)\n%s\n%s",
+                totalMemoryMb(), collectgarbage("count") / 1024, nextText, memory.lastText
+            )
+        end
+    end
+end)
 addSection(renderPage, "Frame rate")
 addToggle(renderPage, "FPS Limit", "FPSLimit", "Выключи, чтобы снять ограничение", function() updateFPS() end)
 local refreshChips = function() end
@@ -1146,7 +1754,7 @@ task.spawn(function()
     end
     table.sort(list, function(a, b) return a.Name < b.Name end)
 
-    fieldsInfo.Text = "Tap a field to teleport (" .. #list .. ")"
+    fieldsInfo.Text = "Tap a field to teleport"
 
     for i, zone in ipairs(list) do
         local btn = mk("TextButton", {
@@ -1157,12 +1765,10 @@ task.spawn(function()
             Font = Enum.Font.Gotham,
             TextSize = 12,
             TextTruncate = Enum.TextTruncate.AtEnd,
-            AutoButtonColor = false,
             LayoutOrder = i
         }, fieldsGrid)
-        corner(btn, 10)
-        addPressFx(btn, btn, THEME.ElementBg, THEME.Hover, THEME.Press)
-        btn.Activated:Connect(function()
+        corner(btn, 8)
+        btn.MouseButton1Click:Connect(function()
             local root = getRoot()
             if root and zone.Parent then
                 root.CFrame = zone.CFrame + Vector3.new(0, 5, 0)
@@ -1178,13 +1784,13 @@ end)
 local rejoinPage = createTab("Rejoin", 3)
 addSection(rejoinPage, "Auto rejoin")
 addToggle(rejoinPage, "Auto Rejoin", "AutoRejoin", "Перезаход при дисконнекте/кике")
-addToggle(rejoinPage, "Any Error (risky)", "AnyError", "Любая ошибка - возможны ложные срабатывания")
+addToggle(rejoinPage, "Any Error", "AnyError", "Любая ошибка - возможны ложные срабатывания")
 statusLabel = addLabel(rejoinPage, "Status: waiting 20s to arm...")
 if REJOIN.armed then setStatus("armed, watching for disconnects") end
 
 do
     local ok, how = canReexecute()
-    addLabel(rejoinPage, "Auto re-run after rejoin: " .. (ok and ("ON (" .. how .. ")") or ("OFF (" .. how .. ")")))
+    addLabel(rejoinPage, "Auto re-run after rejoin: " .. (ok and "ON" or ("OFF - " .. how)))
 end
 
 addSection(rejoinPage, "Actions")
@@ -1203,12 +1809,40 @@ end)
 -- INFO
 local infoPage = createTab("Info", 4)
 addSection(infoPage, "About")
-addLabel(infoPage, "Swarm Tweaker: Lite Project v7\nМеню: RightShift. Настройки сохраняются в LiteProject_Config.json.")
+addLabel(infoPage, "Lite Project\nМеню: RightShift")
 addSection(infoPage, "Control")
 addButton(infoPage, "Save Config Now", function()
     safeWrite(CONFIG_FILE, HttpService:JSONEncode(Config))
     notify("Config saved")
 end)
+local function dumpStructure()
+    local out = {}
+    for _, c in ipairs(Workspace:GetChildren()) do
+        if not (c:IsA("Terrain") or c:IsA("Camera")) and not Players:GetPlayerFromCharacter(c) then
+            local kids = c:GetChildren()
+            out[#out + 1] = c.ClassName .. ": " .. c.Name .. " (" .. #kids .. ")"
+            local seen, shown = {}, 0
+            for _, k in ipairs(kids) do
+                if not seen[k.Name] and shown < 12 then
+                    seen[k.Name] = true
+                    shown = shown + 1
+                    out[#out + 1] = "    - " .. k.ClassName .. ": " .. k.Name
+                end
+            end
+        end
+    end
+    local text = table.concat(out, "\n")
+    if #text > 15000 then text = text:sub(1, 15000) end
+    if type(setclipboard) == "function" then
+        setclipboard(text)
+        notify("Workspace structure copied")
+    else
+        notify("setclipboard not supported")
+    end
+end
+
+addSection(infoPage, "Debug")
+addButton(infoPage, "Copy Workspace Structure", dumpStructure)
 addButton(infoPage, "Unload Script", function()
     if _G.LiteProjectUnload then _G.LiteProjectUnload() end
 end, true)
@@ -1224,6 +1858,12 @@ _G.LiteProjectUnload = function()
     for _, c in ipairs(conns) do
         pcall(function() c:Disconnect() end)
     end
+    pcall(function()
+        if boost.conn then boost.conn:Disconnect() end
+        if boost.light then
+            restoreBoost() -- alive = false, поэтому повторно буст не применится
+        end
+    end)
     pcall(function() setfpscap(0) end)
     destroyOldGuis()
     _G.LiteProjectDoRejoin = nil
@@ -1234,12 +1874,13 @@ end
 -- ============================================================
 
 updateFPS()
+if Config.FPSBoost then applyBoost() end
 
 task.defer(function()
     notify("Lite Project loaded - RightShift to toggle")
 end)
 
-print("[Swarm Tweaker Lite v7] loaded. RightShift - hide/show menu.")
+print("[Lite Project] loaded. RightShift - hide/show menu.")
 
 ]==]
 pcall(function() writefile("LiteProject.lua", SRC) end)
