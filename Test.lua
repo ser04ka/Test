@@ -71,9 +71,10 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 6,
+    V = 7,
     FPSBoost = true,
     AutoClean = true,
+    JunkClean = true,
     LowMemRejoin = false,
     LowMemMB = 2500,
     FPSLimit = true,
@@ -631,6 +632,130 @@ local function restoreBoost()
         end
     end)
 end
+
+-- ============================================================
+-- === JUNK CLEANER (накопившиеся токены и счётчик объектов) ===
+-- ============================================================
+
+local JUNK = {
+    interval = 5 * 60,
+    staleTokenSec = 240,   -- токен старше 4 минут уже не нужен
+    farTokenStuds = 250,   -- токены дальше 250 стадов от игрока сейчас бесполезны
+    nextAt = os.clock() + 5 * 60,
+    cleaning = false,
+    scanning = false,
+    lastText = "Junk: not cleaned yet",
+    scanText = "Objects: press Scan Objects",
+    born = setmetatable({}, { __mode = "k" })
+}
+local JUNK_START = os.clock()
+
+-- запоминаем, когда появился каждый токен
+track(Workspace.DescendantAdded:Connect(function(v)
+    local p = v.Parent
+    if p and p.Name == "Collectibles" then
+        JUNK.born[v] = os.clock()
+    end
+end))
+
+local function cleanJunk()
+    if JUNK.cleaning then return end
+    JUNK.cleaning = true
+
+    local ok, err = pcall(function()
+        local now = os.clock()
+        local stale, far = 0, 0
+        local step = newSlicer()
+
+        local pos = nil
+        pcall(function()
+            local char = player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then pos = root.Position end
+        end)
+
+        local col = Workspace:FindFirstChild("Collectibles")
+        if col then
+            for _, tok in ipairs(col:GetChildren()) do
+                local born = JUNK.born[tok] or JUNK_START
+                local remove = false
+
+                if now - born > JUNK.staleTokenSec then
+                    stale = stale + 1
+                    remove = true
+                elseif pos then
+                    local okp, p = pcall(function() return tok:GetPivot().Position end)
+                    if okp and (p - pos).Magnitude > JUNK.farTokenStuds then
+                        far = far + 1
+                        remove = true
+                    end
+                end
+
+                if remove then
+                    pcall(function() tok:Destroy() end)
+                end
+                step()
+            end
+        end
+
+        JUNK.lastText = string.format("Junk: removed %d tokens (old %d, far %d)", stale + far, stale, far)
+    end)
+
+    if not ok then
+        JUNK.lastText = "Junk clean failed: " .. tostring(err):sub(1, 60)
+    end
+    JUNK.nextAt = os.clock() + JUNK.interval
+    JUNK.cleaning = false
+end
+
+-- Считает объекты по верхнеуровневым папкам карты (чтобы видеть, что разбухает)
+local function scanObjects()
+    if JUNK.scanning then return end
+    JUNK.scanning = true
+
+    pcall(function()
+        local rows, total = {}, 0
+        for _, c in ipairs(Workspace:GetChildren()) do
+            if not c:IsA("Terrain") and not c:IsA("Camera") and not Players:GetPlayerFromCharacter(c) then
+                local n = #c:GetDescendants() + 1
+                total = total + n
+                rows[#rows + 1] = { c.Name, n }
+                task.wait()
+            end
+        end
+        table.sort(rows, function(a, b) return a[2] > b[2] end)
+
+        local top = {}
+        for i = 1, math.min(4, #rows) do
+            top[#top + 1] = rows[i][1] .. " " .. rows[i][2]
+        end
+        JUNK.scanText = string.format("Objects: %d | %s", total, table.concat(top, ", "))
+
+        -- полный отчёт в буфер обмена
+        local lines = { "Total objects: " .. total }
+        for i = 1, math.min(20, #rows) do
+            lines[#lines + 1] = rows[i][1] .. ": " .. rows[i][2]
+        end
+        if type(setclipboard) == "function" then
+            setclipboard(table.concat(lines, "\n"))
+            notify("Object report copied")
+        end
+    end)
+
+    JUNK.scanning = false
+end
+
+task.spawn(function()
+    while alive and task.wait(5) do
+        if Config.JunkClean then
+            if os.clock() >= JUNK.nextAt then
+                cleanJunk()
+            end
+        else
+            JUNK.nextAt = os.clock() + JUNK.interval
+        end
+    end
+end)
 
 -- ============================================================
 -- === MEMORY CLEANER (раз в 30 минут) ===
@@ -1455,8 +1580,15 @@ end)
 addSection(renderPage, "Memory")
 addToggle(renderPage, "Auto Clean Memory", "AutoClean", "Очистка раз в 30 минут")
 local memLabel = addLabel(renderPage, "Memory: ...")
+addToggle(renderPage, "Auto Clean Junk", "JunkClean", "Старые и далёкие токены, каждые 5 минут")
 addButton(renderPage, "Clean Memory Now", function()
-    task.spawn(cleanMemory)
+    task.spawn(function()
+        cleanJunk()
+        cleanMemory()
+    end)
+end)
+addButton(renderPage, "Scan Objects", function()
+    task.spawn(scanObjects)
 end)
 addToggle(renderPage, "Rejoin if memory is high", "LowMemRejoin", "Полный сброс памяти перезаходом")
 addSlider(renderPage, "Memory limit (MB)", 1000, 4000, "LowMemMB")
@@ -1466,8 +1598,8 @@ task.spawn(function()
             local mins = math.max(0, math.ceil((memory.nextAt - os.clock()) / 60))
             local nextText = Config.AutoClean and ("Next clean in " .. mins .. " min") or "Auto clean is off"
             memLabel.Text = string.format(
-                "Memory: %.0f MB (Lua %.0f MB)\n%s\n%s",
-                totalMemoryMb(), luaKb() / 1024, nextText, memory.lastText
+                "Memory: %.0f MB (Lua %.0f MB)\n%s\n%s\n%s\n%s",
+                totalMemoryMb(), luaKb() / 1024, nextText, memory.lastText, JUNK.lastText, JUNK.scanText
             )
         end
     end
