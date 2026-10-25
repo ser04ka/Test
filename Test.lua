@@ -884,56 +884,98 @@ local function totalMemoryMb()
     return 0
 end
 
+local function luaMb()
+    local ok, v = pcall(collectgarbage, "count")
+    if ok and type(v) == "number" then return v / 1024 end
+    return 0
+end
+
+-- Топ потребителей памяти (по тегам движка Roblox)
+local function topMemoryTags(n)
+    local list = {}
+    local ok = pcall(function()
+        for _, tag in ipairs(Enum.DeveloperMemoryTag:GetEnumItems()) do
+            local mb = Stats:GetMemoryUsageMbForTag(tag)
+            if mb and mb >= 5 then list[#list + 1] = { tag.Name, mb } end
+        end
+    end)
+    if not ok or #list == 0 then return "n/a" end
+    table.sort(list, function(x, y) return x[2] > y[2] end)
+    local parts = {}
+    for i = 1, math.min(n, #list) do
+        parts[#parts + 1] = string.format("%s %.0f", list[i][1], list[i][2])
+    end
+    return table.concat(parts, ", ")
+end
+
+-- Принудительная сборка мусора. В Roblox/некоторых эксплойтах
+-- collectgarbage("collect") запрещён - пробуем все доступные варианты.
+local function tryGC()
+    if pcall(collectgarbage, "collect") then return true end
+    if pcall(collectgarbage) then return true end
+    if pcall(function() collectgarbage("step", 100000) end) then return true end
+    return false
+end
+
 local function cleanMemory()
     if memory.cleaning then return end
     memory.cleaning = true
 
     local ok, err = pcall(function()
-        local luaBefore = collectgarbage("count") / 1024
-        local totalBefore = totalMemoryMb()
+        local luaBefore, totalBefore = luaMb(), totalMemoryMb()
 
         -- 1) собственные кэши скрипта
-        boost.names, boost.dnames = {}, {}
-        boost.hide = setmetatable({}, { __mode = "k" })
+        pcall(function()
+            boost.names, boost.dnames = {}, {}
+            boost.hide = setmetatable({}, { __mode = "k" })
+        end)
 
         -- 2) записи о давно удалённых объектах (чтобы таблицы не росли бесконечно)
-        local deadParts, deadFx = {}, {}
-        for part in pairs(boost.parts) do
-            if not part.Parent then deadParts[#deadParts + 1] = part end
-        end
-        for obj in pairs(boost.fx) do
-            if not obj.Parent then deadFx[#deadFx + 1] = obj end
-        end
-        local step = newSlicer()
-        for _, part in ipairs(deadParts) do
-            boost.parts[part] = nil
-            step()
-        end
-        for _, obj in ipairs(deadFx) do
-            boost.fx[obj] = nil
-            step()
-        end
+        pcall(function()
+            local deadParts, deadFx = {}, {}
+            for part in pairs(boost.parts) do
+                if not part.Parent then deadParts[#deadParts + 1] = part end
+            end
+            for obj in pairs(boost.fx) do
+                if not obj.Parent then deadFx[#deadFx + 1] = obj end
+            end
+            local step = newSlicer()
+            for _, part in ipairs(deadParts) do
+                boost.parts[part] = nil
+                step()
+            end
+            for _, obj in ipairs(deadFx) do
+                boost.fx[obj] = nil
+                step()
+            end
+        end)
 
-        -- 3) полная сборка мусора в два прохода (второй добирает то, что освободил первый)
+        -- 3) сборка мусора (два прохода: второй добирает то, что освободил первый)
         task.wait()
-        collectgarbage("collect")
-        task.wait(0.25)
-        collectgarbage("collect")
-        task.wait(0.25)
+        local gcOk = tryGC()
+        if gcOk then
+            task.wait(0.25)
+            tryGC()
+            task.wait(0.25)
+        end
 
-        local luaAfter = collectgarbage("count") / 1024
-        local totalAfter = totalMemoryMb()
-        local freedLua = math.max(0, luaBefore - luaAfter)
+        local luaAfter, totalAfter = luaMb(), totalMemoryMb()
+        local freed = math.max(0, luaBefore - luaAfter)
 
-        memory.lastText = string.format(
-            "Last clean: -%.1f MB Lua, total %.0f to %.0f MB",
-            freedLua, totalBefore, totalAfter
-        )
-        notify(string.format("Memory cleaned: -%.1f MB", freedLua))
+        if gcOk then
+            memory.lastText = string.format(
+                "Last clean: -%.1f MB Lua, total %.0f to %.0f MB",
+                freed, totalBefore, totalAfter
+            )
+            notify(string.format("Memory cleaned: -%.1f MB", freed))
+        else
+            memory.lastText = "Last clean: caches cleared, forced GC is blocked here"
+            notify("Caches cleared (GC blocked by executor)")
+        end
     end)
 
     if not ok then
-        memory.lastText = "Last clean: error"
+        memory.lastText = "Last clean failed: " .. tostring(err):sub(1, 70)
     end
     memory.nextAt = os.clock() + CLEAN_INTERVAL
     memory.cleaning = false
@@ -1072,17 +1114,6 @@ mk("UIGradient", {
     Rotation = 45
 }, logoText)
 
--- индикатор состояния: зелёный - перезаход активен, жёлтый - включается, красный - выключен
-local logoDot = mk("Frame", {
-    Size = UDim2.fromOffset(13, 13),
-    Position = UDim2.new(1, -13, 1, -13),
-    BackgroundColor3 = THEME.Warn,
-    BorderSizePixel = 0,
-    ZIndex = 3
-}, openBtn)
-corner(logoDot, 7)
-mk("UIStroke", { Color = THEME.Bg, Thickness = 2 }, logoDot)
-
 local logoScale = mk("UIScale", { Scale = 1 }, openBtn)
 openBtn.MouseButton1Down:Connect(function()
     TweenService:Create(logoScale, TweenInfo.new(0.08), { Scale = 0.9 }):Play()
@@ -1094,21 +1125,10 @@ openBtn.MouseButton1Up:Connect(logoRelease)
 openBtn.MouseLeave:Connect(logoRelease)
 
 task.spawn(function()
-    local tick_ = 0
     while alive do
         task.wait(0.05)
         if openBtn.Visible then
             ringGradient.Rotation = (ringGradient.Rotation + 4) % 360
-            tick_ = tick_ + 1
-            if tick_ % 20 == 0 then
-                if not Config.AutoRejoin then
-                    logoDot.BackgroundColor3 = THEME.Bad
-                elseif REJOIN.armed then
-                    logoDot.BackgroundColor3 = THEME.Good
-                else
-                    logoDot.BackgroundColor3 = THEME.Warn
-                end
-            end
         end
     end
 end)
@@ -1675,8 +1695,8 @@ task.spawn(function()
             local mins = math.max(0, math.ceil((memory.nextAt - os.clock()) / 60))
             local nextText = Config.AutoClean and ("Next clean in " .. mins .. " min") or "Auto clean is off"
             memLabel.Text = string.format(
-                "Memory: %.0f MB (Lua %.0f MB)\n%s\n%s",
-                totalMemoryMb(), collectgarbage("count") / 1024, nextText, memory.lastText
+                "Memory: %.0f MB (Lua %.0f MB)\nTop: %s\n%s\n%s",
+                totalMemoryMb(), luaMb(), topMemoryTags(3), nextText, memory.lastText
             )
         end
     end
