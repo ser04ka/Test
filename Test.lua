@@ -71,10 +71,13 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 7,
+    V = 8,
     FPSBoost = true,
     AutoClean = true,
     JunkClean = true,
+    StallGuard = false,
+    StallMin = 15,
+    BossAlert = true,
     LowMemRejoin = false,
     LowMemMB = 2500,
     FPSLimit = true,
@@ -906,6 +909,199 @@ task.spawn(function()
 end)
 
 -- ============================================================
+-- === COMPANION (дополнение к автофарму: статистика, Stall Guard, боссы, сервер) ===
+-- ============================================================
+
+local STATS_FILE = "LiteProject_Stats.json"
+local comp = {
+    honey = nil,
+    last = nil,
+    hasStat = false,
+    gained = 0,
+    seconds = 0,
+    rejoins = 0,
+    lastIncrease = os.clock(),
+    startClock = os.clock(),
+    bossText = "Boss alerts: starting...",
+    lastBoss = nil,
+    lastBossName = "",
+    lastBossAt = 0
+}
+
+local function fmtNum(n)
+    n = tonumber(n) or 0
+    local units = { { 1e12, "T" }, { 1e9, "B" }, { 1e6, "M" }, { 1e3, "K" } }
+    for _, u in ipairs(units) do
+        if math.abs(n) >= u[1] then
+            return string.format("%.2f%s", n / u[1], u[2])
+        end
+    end
+    return string.format("%d", math.floor(n))
+end
+
+local function fmtTime(sec)
+    sec = math.floor(sec)
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    return string.format("%dh %02dm", h, m)
+end
+
+-- статистика переживает перезаходы (если с момента последней записи прошло < 15 минут)
+do
+    local raw = safeRead(STATS_FILE)
+    if raw then
+        pcall(function()
+            local d = HttpService:JSONDecode(raw)
+            if type(d) == "table" and os.time() - (d.lastSeen or 0) < 900 then
+                comp.gained = d.gained or 0
+                comp.seconds = d.seconds or 0
+                comp.rejoins = (d.rejoins or 0) + 1
+            end
+        end)
+    end
+end
+
+local function saveStats()
+    pcall(function()
+        safeWrite(STATS_FILE, HttpService:JSONEncode({
+            gained = comp.gained,
+            seconds = comp.seconds,
+            rejoins = comp.rejoins,
+            lastSeen = os.time()
+        }))
+    end)
+end
+
+local function findStat(name)
+    local cs = player:FindFirstChild("CoreStats")
+    local v = cs and cs:FindFirstChild(name)
+    if not v then v = player:FindFirstChild(name, true) end
+    if v and v:IsA("ValueBase") and type(v.Value) == "number" then return v end
+    return nil
+end
+
+-- Основной цикл: считаем мёд и следим, чтобы фарм не застрял
+task.spawn(function()
+    local statValue = nil
+    local tickCount = 0
+
+    while alive and task.wait(5) do
+        comp.seconds = comp.seconds + 5
+
+        if not statValue or not statValue.Parent then
+            statValue = findStat("Honey")
+            comp.last = nil
+        end
+        comp.hasStat = statValue ~= nil
+
+        if statValue then
+            local h = statValue.Value
+            comp.honey = h
+            if comp.last ~= nil and h > comp.last then
+                comp.gained = comp.gained + (h - comp.last)
+                comp.lastIncrease = os.clock()
+            end
+            comp.last = h
+        end
+
+        tickCount = tickCount + 1
+        if tickCount % 6 == 0 then saveStats() end
+
+        -- Stall Guard: мёд давно не растёт - значит автофарм завис
+        if Config.StallGuard and statValue and os.clock() - comp.startClock > 300 then
+            if os.clock() - comp.lastIncrease > Config.StallMin * 60 and not REJOIN.busy then
+                comp.lastIncrease = os.clock()
+                doRejoinCore("Stall: honey not growing", true, true)
+            end
+        end
+    end
+end)
+
+-- Оповещения о боссах
+local BOSS_KEYS = {
+    "vicious", "windy", "mondo", "stick bug", "coconut crab",
+    "king beetle", "tunnel bear", "commando"
+}
+
+task.spawn(function()
+    local folder = Workspace:WaitForChild("Monsters", 15)
+    if not folder then
+        comp.bossText = "Boss alerts: Monsters folder not found"
+        return
+    end
+    comp.bossText = "Boss alerts: watching"
+
+    track(folder.ChildAdded:Connect(function(child)
+        if not Config.BossAlert then return end
+        local n = string.lower(child.Name)
+        for _, k in ipairs(BOSS_KEYS) do
+            if n:find(k, 1, true) then
+                comp.lastBoss = child
+                comp.lastBossName = child.Name
+                comp.lastBossAt = os.clock()
+                comp.bossText = "Last boss: " .. child.Name
+                notify("Boss spawned: " .. child.Name)
+                break
+            end
+        end
+    end))
+end)
+
+local function tpToBoss()
+    local b = comp.lastBoss
+    if not b or not b.Parent then
+        notify("No active boss")
+        return
+    end
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local ok, cf = pcall(function() return b:GetPivot() end)
+    if ok and root then
+        root.CFrame = cf + Vector3.new(0, 8, 0)
+        notify("Teleported to " .. b.Name)
+    else
+        notify("Can't teleport right now")
+    end
+end
+
+-- Заход на менее загруженный сервер
+local function hopQuietServer()
+    local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId)
+        .. "/servers/Public?sortOrder=Asc&limit=100"
+
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(body) ~= "string" then
+        notify("Server list unavailable")
+        return
+    end
+
+    local okj, data = pcall(function() return HttpService:JSONDecode(body) end)
+    if not okj or type(data) ~= "table" or type(data.data) ~= "table" then
+        notify("Server list parse failed")
+        return
+    end
+
+    local best = nil
+    for _, sv in ipairs(data.data) do
+        if sv.id ~= game.JobId and sv.playing and sv.maxPlayers
+            and sv.playing >= 2 and sv.playing < sv.maxPlayers - 1 then
+            if not best or sv.playing < best.playing then best = sv end
+        end
+    end
+
+    if not best then
+        notify("No suitable quiet server found")
+        return
+    end
+
+    notify("Hopping to server with " .. best.playing .. " players")
+    queueReexecute()
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, best.id, player)
+    end)
+end
+
+-- ============================================================
 -- === UI ===
 -- ============================================================
 
@@ -1703,8 +1899,63 @@ task.spawn(function()
     end
 end)
 
+-- COMPANION (дополнение к автофарму)
+local compPage = createTab("Companion", 3)
+addSection(compPage, "Session")
+local statsLabel = addLabel(compPage, "Stats: ...")
+addButton(compPage, "Reset Stats", function()
+    comp.gained, comp.seconds, comp.rejoins = 0, 0, 0
+    comp.lastIncrease = os.clock()
+    saveStats()
+    notify("Stats reset")
+end)
+
+addSection(compPage, "Stall Guard")
+addToggle(compPage, "Stall Guard", "StallGuard", "Перезаход, если мёд долго не растёт")
+addSlider(compPage, "Stall timeout (min)", 8, 60, "StallMin")
+local stallLabel = addLabel(compPage, "Stall Guard: ...")
+
+addSection(compPage, "Boss alerts")
+addToggle(compPage, "Boss Alerts", "BossAlert", "Уведомление о Vicious, Windy, Mondo и других")
+local bossLabel = addLabel(compPage, "Boss alerts: ...")
+addButton(compPage, "Teleport to last boss", tpToBoss)
+
+addSection(compPage, "Servers")
+addButton(compPage, "Hop to quiet server", function()
+    task.spawn(hopQuietServer)
+end)
+
+task.spawn(function()
+    while alive and task.wait(2) do
+        if main.Visible and statsLabel.Parent then
+            if comp.hasStat then
+                local perHour = 0
+                if comp.seconds > 60 then
+                    perHour = comp.gained / (comp.seconds / 3600)
+                end
+                statsLabel.Text = string.format(
+                    "Honey: %s\nGained: +%s (%s/h)\nTime: %s | Restarts: %d",
+                    fmtNum(comp.honey), fmtNum(comp.gained), fmtNum(perHour),
+                    fmtTime(comp.seconds), comp.rejoins
+                )
+                local mins = math.floor((os.clock() - comp.lastIncrease) / 60)
+                stallLabel.Text = "Last honey increase: " .. mins .. " min ago"
+            else
+                statsLabel.Text = "Honey stat not found in this game build"
+                stallLabel.Text = "Stall Guard is unavailable"
+            end
+
+            local bossText = comp.bossText
+            if comp.lastBoss and comp.lastBoss.Parent then
+                bossText = bossText .. " (alive)"
+            end
+            bossLabel.Text = bossText
+        end
+    end
+end)
+
 -- REJOIN
-local rejoinPage = createTab("Rejoin", 3)
+local rejoinPage = createTab("Rejoin", 4)
 addSection(rejoinPage, "Auto rejoin")
 addToggle(rejoinPage, "Auto Rejoin", "AutoRejoin", "Перезаход при дисконнекте/кике")
 addToggle(rejoinPage, "Any Error", "AnyError", "Любая ошибка - возможны ложные срабатывания")
@@ -1730,7 +1981,7 @@ addButton(rejoinPage, "Copy Server JobId", function()
 end)
 
 -- INFO
-local infoPage = createTab("Info", 4)
+local infoPage = createTab("Info", 5)
 addSection(infoPage, "About")
 addLabel(infoPage, "Lite Project\nМеню: RightShift")
 addSection(infoPage, "Control")
