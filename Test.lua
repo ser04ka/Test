@@ -71,8 +71,11 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 5,
+    V = 6,
     FPSBoost = true,
+    AutoClean = true,
+    LowMemRejoin = false,
+    LowMemMB = 2500,
     FPSLimit = true,
     FPS = 60,
     AutoRejoin = true,
@@ -628,6 +631,154 @@ local function restoreBoost()
         end
     end)
 end
+
+-- ============================================================
+-- === MEMORY CLEANER (раз в 30 минут) ===
+-- ============================================================
+
+local CLEAN_INTERVAL = 30 * 60
+local START_CLOCK = os.clock()
+local Stats = game:GetService("Stats")
+local memory = {
+    nextAt = os.clock() + CLEAN_INTERVAL,
+    cleaning = false,
+    lastText = "Last clean: not yet"
+}
+
+local function totalMemoryMb()
+    local ok, v = pcall(function() return Stats:GetTotalMemoryUsageMb() end)
+    if ok and type(v) == "number" then return v end
+    return 0
+end
+
+local function luaKb()
+    local ok, v = pcall(collectgarbage, "count")
+    if ok and type(v) == "number" then return v end
+    return 0
+end
+
+-- Способ 1: обычная принудительная сборка (если эксплойт разрешает)
+local function tryRealGC()
+    if pcall(collectgarbage, "collect") then return true end
+    if pcall(collectgarbage) then return true end
+    if pcall(function() collectgarbage("step", 100000) end) then return true end
+    return false
+end
+
+-- Способ 2 (если сборка заблокирована): сборщик мусора Luau двигается вперёд
+-- по мере выделения памяти. Мы создаём и сразу бросаем порции временных
+-- таблиц, давая ему дойти до конца цикла. Объём ограничен, между порциями
+-- отдаём кадр игре. Возвращает самое низкое значение кучи Lua (КБ).
+local function churnGC()
+    local heapKb = luaKb()
+    local capKb = math.clamp(heapKb * 0.5, 16 * 1024, 48 * 1024)
+    local lowest = heapKb
+    local churned = 0
+    local t0 = os.clock()
+    local CHUNK = 20000
+
+    while churned < capKb and os.clock() - t0 < 8 do
+        local junk = table.create(CHUNK)
+        for i = 1, CHUNK do
+            junk[i] = {}
+        end
+        junk = nil
+        churned = churned + 1400
+        task.wait()
+        local now = luaKb()
+        if now < lowest then lowest = now end
+    end
+    return lowest
+end
+
+local function cleanMemory()
+    if memory.cleaning then return end
+    memory.cleaning = true
+
+    local ok, err = pcall(function()
+        local luaBefore, totalBefore = luaKb(), totalMemoryMb()
+
+        -- 1) записи о давно удалённых объектах (чтобы таблицы не росли бесконечно)
+        pcall(function()
+            local deadParts, deadFx = {}, {}
+            for part in pairs(boost.parts) do
+                if not part.Parent then deadParts[#deadParts + 1] = part end
+            end
+            for obj in pairs(boost.fx) do
+                if not obj.Parent then deadFx[#deadFx + 1] = obj end
+            end
+            local step = newSlicer()
+            for _, part in ipairs(deadParts) do
+                boost.parts[part] = nil
+                step()
+            end
+            for _, obj in ipairs(deadFx) do
+                boost.fx[obj] = nil
+                step()
+            end
+        end)
+
+        -- 2) сборка мусора
+        task.wait()
+        local method, luaLow
+        if tryRealGC() then
+            task.wait(0.25)
+            tryRealGC()
+            task.wait(0.25)
+            method = "GC"
+            luaLow = luaKb()
+        else
+            method = "churn"
+            luaLow = churnGC()
+        end
+
+        task.wait(0.5)
+        local totalAfter = totalMemoryMb()
+        local freedMb = math.max(0, (luaBefore - math.min(luaLow, luaKb())) / 1024)
+
+        if freedMb >= 0.5 then
+            memory.lastText = string.format(
+                "Last clean: -%.1f MB Lua, %s, total %.0f to %.0f MB",
+                freedMb, method, totalBefore, totalAfter
+            )
+            notify(string.format("Memory cleaned: -%.1f MB", freedMb))
+        else
+            memory.lastText = string.format("Last clean: nothing to free now, %s", method)
+            notify("Memory: nothing to free right now")
+        end
+    end)
+
+    if not ok then
+        memory.lastText = "Last clean failed: " .. tostring(err):sub(1, 70)
+    end
+    memory.nextAt = os.clock() + CLEAN_INTERVAL
+    memory.cleaning = false
+end
+
+task.spawn(function()
+    while alive and task.wait(5) do
+        if Config.AutoClean then
+            if os.clock() >= memory.nextAt then
+                cleanMemory()
+            end
+        else
+            memory.nextAt = os.clock() + CLEAN_INTERVAL
+        end
+    end
+end)
+
+-- Страховка: если памяти слишком много, перезаходим (единственный полный сброс).
+-- Работает только через 5 минут после запуска, чтобы не уйти в цикл перезаходов.
+task.spawn(function()
+    while alive and task.wait(10) do
+        if Config.LowMemRejoin and os.clock() - START_CLOCK > 300 then
+            local mb = totalMemoryMb()
+            if mb >= Config.LowMemMB and not REJOIN.busy then
+                doRejoinCore("LowMemory " .. math.floor(mb) .. " MB", true, true)
+            end
+        end
+    end
+end)
 
 -- ============================================================
 -- === UI ===
@@ -1300,6 +1451,26 @@ addSection(renderPage, "Performance")
 addToggle(renderPage, "FPS Boost", "FPSBoost", "Лёгкая графика: без текстур, теней, света, частиц", function(on)
     if on then applyBoost() else restoreBoost() end
     notify(on and "FPS Boost: ON" or "FPS Boost: OFF")
+end)
+addSection(renderPage, "Memory")
+addToggle(renderPage, "Auto Clean Memory", "AutoClean", "Очистка раз в 30 минут")
+local memLabel = addLabel(renderPage, "Memory: ...")
+addButton(renderPage, "Clean Memory Now", function()
+    task.spawn(cleanMemory)
+end)
+addToggle(renderPage, "Rejoin if memory is high", "LowMemRejoin", "Полный сброс памяти перезаходом")
+addSlider(renderPage, "Memory limit (MB)", 1000, 4000, "LowMemMB")
+task.spawn(function()
+    while alive and task.wait(2) do
+        if main.Visible and memLabel.Parent then
+            local mins = math.max(0, math.ceil((memory.nextAt - os.clock()) / 60))
+            local nextText = Config.AutoClean and ("Next clean in " .. mins .. " min") or "Auto clean is off"
+            memLabel.Text = string.format(
+                "Memory: %.0f MB (Lua %.0f MB)\n%s\n%s",
+                totalMemoryMb(), luaKb() / 1024, nextText, memory.lastText
+            )
+        end
+    end
 end)
 addSection(renderPage, "Frame rate")
 addToggle(renderPage, "FPS Limit", "FPSLimit", "Выключи, чтобы снять ограничение", function() updateFPS() end)
