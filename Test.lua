@@ -71,12 +71,8 @@ local CONFIG_FILE = "LiteProject_Config.json"
 local SERVER_FILE = "LiteProject_Server.txt"
 
 local Config = {
-    V = 4,
+    V = 5,
     FPSBoost = true,
-    HideBees = true,
-    HideTokens = true,
-    HideDecor = true,
-    AutoClean = true,
     FPSLimit = true,
     FPS = 60,
     AutoRejoin = true,
@@ -425,12 +421,7 @@ local boost = {
     quality = nil,
     conn = nil,
     token = 0,
-    restoring = false,
-    hide = setmetatable({}, { __mode = "k" }),
-    names = {},
-    dnames = {},
-    deleted = 0,
-    underY = nil
+    restoring = false
 }
 
 local FX_CLASSES = {
@@ -460,219 +451,8 @@ local function inCharacter(obj)
     return model ~= nil and Players:GetPlayerFromCharacter(model) ~= nil
 end
 
--- Правила скрытия по названиям объектов (подстроки в нижнем регистре).
--- Объекты НЕ удаляются, а скрываются (Transparency = 1) - это безопасно:
--- токены остаются собираемыми, ничего не ломается, а при выключении всё возвращается.
-local HIDE_RULES = {
-    { flag = "HideBees", include = { "bee" },
-      exclude = { "bear", "honey", "hive", "shop", "store", "spawn" } },
-    { flag = "HideTokens", include = { "collectible" }, exclude = {} },
-    { flag = "HideDecor",
-      include = {
-          "bubble", "particle", "tree", "cactus", "pumpkin", "strawberr", "clover",
-          "web", "bush", "bamboo", "pineapple", "pepper", "sunflower", "coconut",
-          "palm", "rose", "frog", "fence", "flower", "grass"
-      },
-      exclude = { "crab" } }
-}
-local SKIP_NAMES = {
-    part = true, meshpart = true, union = true, model = true,
-    folder = true, handle = true, mesh = true
-}
-
-local function nameHidesRaw(name)
-    local n = string.lower(name)
-    if SKIP_NAMES[n] then return false end
-    for _, rule in ipairs(HIDE_RULES) do
-        if Config[rule.flag] then
-            local blocked = false
-            for _, x in ipairs(rule.exclude) do
-                if n:find(x, 1, true) then
-                    blocked = true
-                    break
-                end
-            end
-            if not blocked then
-                for _, k in ipairs(rule.include) do
-                    if n:find(k, 1, true) then return true end
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function nameHides(name)
-    local c = boost.names[name]
-    if c == nil then
-        c = nameHidesRaw(name)
-        boost.names[name] = c
-    end
-    return c
-end
-
--- true, если сам объект или любой его родитель подходит под правила
--- (персонажи игроков никогда не скрываются). Результаты кэшируются.
-local function hiddenByName(inst)
-    local cache = boost.hide
-    local chain, hit, n = {}, {}, 0
-    local base, isChar = false, false
-    local cur = inst
-
-    while cur and cur ~= Workspace do
-        local c = cache[cur]
-        if c ~= nil then
-            if c == "char" then isChar = true else base = c end
-            break
-        end
-        if cur:IsA("Model") and Players:GetPlayerFromCharacter(cur) then
-            cache[cur] = "char"
-            isChar = true
-            break
-        end
-        n = n + 1
-        chain[n] = cur
-        hit[n] = nameHides(cur.Name)
-        cur = cur.Parent
-    end
-
-    local val = (not isChar) and base or false
-    for i = n, 1, -1 do
-        if isChar then
-            val = false
-        else
-            val = val or hit[i]
-        end
-        cache[chain[i]] = val
-    end
-    return val
-end
-
--- Всё, что целиком находится глубоко под картой
-local function computeUnderY()
-    local zones = Workspace:FindFirstChild("FlowerZones")
-    if not zones then return nil end
-    local minY = nil
-    for _, z in ipairs(zones:GetChildren()) do
-        if z:IsA("BasePart") then
-            local y = z.Position.Y
-            if minY == nil or y < minY then minY = y end
-        end
-    end
-    if minY then return minY - 60 end
-    return nil
-end
-
-local function underMap(part)
-    local y = boost.underY
-    if not y then return false end
-    local ok, res = pcall(function()
-        return part.Position.Y + part.Size.Y * 0.5 < y
-    end)
-    return ok and res and not inCharacter(part)
-end
-
--- ============================================================
--- Реальное УДАЛЕНИЕ декора (деревья, кусты, цветы, заборы и т.д.)
--- Удалённое возвращается только после перезахода на сервер.
--- ============================================================
-local DELETE_KEYS = {
-    "tree", "cactus", "pumpkin", "strawberr", "clover", "web", "bush", "bamboo",
-    "pineapple", "pepper", "sunflower", "coconut", "palm", "rose", "frog",
-    "fence", "flower", "grass"
-}
-local DELETE_EXCLUDE = { "crab", "zone", "street" }
-
--- Контейнеры, внутри которых ничего не удаляем (игровая логика)
-local PROTECTED_ANCESTORS = {
-    "FlowerZones", "Collectibles", "Particles", "Honeycombs", "NPCs", "Monsters", "MonsterSpawners"
-}
-
-local function decorNameMatches(name)
-    local c = boost.dnames[name]
-    if c ~= nil then return c end
-
-    local n = string.lower(name)
-    local res = false
-    if not SKIP_NAMES[n] then
-        local blocked = false
-        for _, x in ipairs(DELETE_EXCLUDE) do
-            if n:find(x, 1, true) then
-                blocked = true
-                break
-            end
-        end
-        if not blocked then
-            for _, k in ipairs(DELETE_KEYS) do
-                if n:find(k, 1, true) then
-                    res = true
-                    break
-                end
-            end
-        end
-    end
-    boost.dnames[name] = res
-    return res
-end
-
-local function isProtected(obj)
-    for _, name in ipairs(PROTECTED_ANCESTORS) do
-        if obj.Name == name or obj:FindFirstAncestor(name) then return true end
-    end
-    if Players:GetPlayerFromCharacter(obj) or inCharacter(obj) then return true end
-    for _, pl in ipairs(Players:GetPlayers()) do
-        local c = pl.Character
-        if c and (obj == c or obj:IsAncestorOf(c)) then return true end
-    end
-    -- NPC, монстры и всё, где есть Humanoid
-    if obj:IsA("Model") or obj:IsA("Folder") then
-        if obj:FindFirstChildWhichIsA("Humanoid", true) then return true end
-    end
-    return false
-end
-
--- Большие твёрдые части (земля поля) не удаляем, чтобы не провалиться под карту
-local function isFloorPart(p)
-    return p.CanCollide and math.max(p.Size.X, p.Size.Z) >= 25
-end
-
-local function safeToDestroy(obj)
-    if obj:IsA("BasePart") then
-        return not isFloorPart(obj)
-    end
-    for _, d in ipairs(obj:GetDescendants()) do
-        if d:IsA("BasePart") and isFloorPart(d) then return false end
-    end
-    return true
-end
-
--- true = объект удалён (или уже удалён) и дальше его обрабатывать не нужно
-local function decorDelete(obj)
-    if not obj.Parent then return true end
-    if not (obj:IsA("BasePart") or obj:IsA("Model") or obj:IsA("Folder")) then return false end
-
-    local parent = obj.Parent
-    local matched = decorNameMatches(obj.Name)
-
-    -- содержимое верхнеуровневой папки вроде "Flowers" удаляем, саму папку оставляем
-    if not matched and parent and parent.Parent == Workspace and parent:IsA("Folder")
-        and decorNameMatches(parent.Name) then
-        matched = true
-    end
-    if not matched then return false end
-    if obj:IsA("Folder") and parent == Workspace then return false end
-
-    if isProtected(obj) or not safeToDestroy(obj) then return false end
-
-    boost.deleted = boost.deleted + 1
-    obj:Destroy()
-    return true
-end
-
 local function processObj(obj)
     if obj:IsA("Terrain") then return end
-
-    if Config.HideDecor and decorDelete(obj) then return end
 
     if obj:IsA("BasePart") then
         local s = boost.parts[obj]
@@ -689,10 +469,6 @@ local function processObj(obj)
             obj.TextureID = ""
         end
 
-        if hiddenByName(obj) or (Config.HideDecor and underMap(obj)) then
-            if s[5] == nil then s[5] = obj.Transparency end
-            obj.Transparency = 1
-        end
     elseif FX_CLASSES[obj.ClassName] then
         if boost.fx[obj] == nil then boost.fx[obj] = { "Enabled", obj.Enabled } end
         obj.Enabled = false
@@ -700,11 +476,6 @@ local function processObj(obj)
         if boost.fx[obj] == nil and not inCharacter(obj) then
             boost.fx[obj] = { "Transparency", obj.Transparency }
             obj.Transparency = 1
-        end
-    elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
-        if boost.fx[obj] == nil and hiddenByName(obj) then
-            boost.fx[obj] = { "Enabled", obj.Enabled }
-            obj.Enabled = false
         end
     end
 end
@@ -714,10 +485,6 @@ local function applyBoost()
 
     boost.token = boost.token + 1
     local token = boost.token
-
-    boost.hide = setmetatable({}, { __mode = "k" })
-    boost.names, boost.dnames = {}, {}
-    boost.underY = computeUnderY()
 
     if not boost.light then
         boost.light = {}
@@ -801,9 +568,6 @@ end
 local function restoreBoost()
     boost.token = boost.token + 1
     boost.restoring = true
-    boost.hide = setmetatable({}, { __mode = "k" })
-    boost.names, boost.dnames = {}, {}
-
     if boost.conn then
         boost.conn:Disconnect()
         boost.conn = nil
@@ -843,7 +607,6 @@ local function restoreBoost()
                     part.Reflectance = s[2]
                     part.CastShadow = s[3]
                     if s[4] ~= nil then part.TextureID = s[4] end
-                    if s[5] ~= nil then part.Transparency = s[5] end
                 end)
             end
             boost.parts[part] = nil
@@ -865,133 +628,6 @@ local function restoreBoost()
         end
     end)
 end
-
--- ============================================================
--- === MEMORY CLEANER (раз в 30 минут) ===
--- ============================================================
-
-local CLEAN_INTERVAL = 30 * 60
-local Stats = game:GetService("Stats")
-local memory = {
-    nextAt = os.clock() + CLEAN_INTERVAL,
-    cleaning = false,
-    lastText = "Last clean: not yet"
-}
-
-local function totalMemoryMb()
-    local ok, v = pcall(function() return Stats:GetTotalMemoryUsageMb() end)
-    if ok and type(v) == "number" then return v end
-    return 0
-end
-
-local function luaMb()
-    local ok, v = pcall(collectgarbage, "count")
-    if ok and type(v) == "number" then return v / 1024 end
-    return 0
-end
-
--- Топ потребителей памяти (по тегам движка Roblox)
-local function topMemoryTags(n)
-    local list = {}
-    local ok = pcall(function()
-        for _, tag in ipairs(Enum.DeveloperMemoryTag:GetEnumItems()) do
-            local mb = Stats:GetMemoryUsageMbForTag(tag)
-            if mb and mb >= 5 then list[#list + 1] = { tag.Name, mb } end
-        end
-    end)
-    if not ok or #list == 0 then return "n/a" end
-    table.sort(list, function(x, y) return x[2] > y[2] end)
-    local parts = {}
-    for i = 1, math.min(n, #list) do
-        parts[#parts + 1] = string.format("%s %.0f", list[i][1], list[i][2])
-    end
-    return table.concat(parts, ", ")
-end
-
--- Принудительная сборка мусора. В Roblox/некоторых эксплойтах
--- collectgarbage("collect") запрещён - пробуем все доступные варианты.
-local function tryGC()
-    if pcall(collectgarbage, "collect") then return true end
-    if pcall(collectgarbage) then return true end
-    if pcall(function() collectgarbage("step", 100000) end) then return true end
-    return false
-end
-
-local function cleanMemory()
-    if memory.cleaning then return end
-    memory.cleaning = true
-
-    local ok, err = pcall(function()
-        local luaBefore, totalBefore = luaMb(), totalMemoryMb()
-
-        -- 1) собственные кэши скрипта
-        pcall(function()
-            boost.names, boost.dnames = {}, {}
-            boost.hide = setmetatable({}, { __mode = "k" })
-        end)
-
-        -- 2) записи о давно удалённых объектах (чтобы таблицы не росли бесконечно)
-        pcall(function()
-            local deadParts, deadFx = {}, {}
-            for part in pairs(boost.parts) do
-                if not part.Parent then deadParts[#deadParts + 1] = part end
-            end
-            for obj in pairs(boost.fx) do
-                if not obj.Parent then deadFx[#deadFx + 1] = obj end
-            end
-            local step = newSlicer()
-            for _, part in ipairs(deadParts) do
-                boost.parts[part] = nil
-                step()
-            end
-            for _, obj in ipairs(deadFx) do
-                boost.fx[obj] = nil
-                step()
-            end
-        end)
-
-        -- 3) сборка мусора (два прохода: второй добирает то, что освободил первый)
-        task.wait()
-        local gcOk = tryGC()
-        if gcOk then
-            task.wait(0.25)
-            tryGC()
-            task.wait(0.25)
-        end
-
-        local luaAfter, totalAfter = luaMb(), totalMemoryMb()
-        local freed = math.max(0, luaBefore - luaAfter)
-
-        if gcOk then
-            memory.lastText = string.format(
-                "Last clean: -%.1f MB Lua, total %.0f to %.0f MB",
-                freed, totalBefore, totalAfter
-            )
-            notify(string.format("Memory cleaned: -%.1f MB", freed))
-        else
-            memory.lastText = "Last clean: caches cleared, forced GC is blocked here"
-            notify("Caches cleared (GC blocked by executor)")
-        end
-    end)
-
-    if not ok then
-        memory.lastText = "Last clean failed: " .. tostring(err):sub(1, 70)
-    end
-    memory.nextAt = os.clock() + CLEAN_INTERVAL
-    memory.cleaning = false
-end
-
-task.spawn(function()
-    while alive and task.wait(5) do
-        if Config.AutoClean then
-            if os.clock() >= memory.nextAt then
-                cleanMemory()
-            end
-        else
-            memory.nextAt = os.clock() + CLEAN_INTERVAL
-        end
-    end
-end)
 
 -- ============================================================
 -- === UI ===
@@ -1663,43 +1299,7 @@ local renderPage = createTab("Render", 1)
 addSection(renderPage, "Performance")
 addToggle(renderPage, "FPS Boost", "FPSBoost", "Лёгкая графика: без текстур, теней, света, частиц", function(on)
     if on then applyBoost() else restoreBoost() end
-    if on then
-        notify("FPS Boost: ON")
-    elseif boost.deleted > 0 then
-        notify("FPS Boost: OFF. Удалённый декор вернётся после перезахода")
-    else
-        notify("FPS Boost: OFF")
-    end
-end)
-addSection(renderPage, "What to hide")
-local function reapplyHide()
-    if Config.FPSBoost then restoreBoost() end -- восстановит и сразу применит заново
-end
-addToggle(renderPage, "Hide Bees", "HideBees", "Все пчёлы, включая декоративных", reapplyHide)
-addToggle(renderPage, "Hide Tokens", "HideTokens", "Токены невидимы, но собираются", reapplyHide)
-addToggle(renderPage, "Delete Map Decor", "HideDecor", "Удаляет деревья, кусты, цветы и заборы до перезахода", function(on)
-    reapplyHide()
-    if not on and boost.deleted > 0 then
-        notify("Удалённое вернётся после перезахода")
-    end
-end)
-addSection(renderPage, "Memory")
-addToggle(renderPage, "Auto Clean Memory", "AutoClean", "Полная очистка каждые 30 минут")
-local memLabel = addLabel(renderPage, "Memory: ...")
-addButton(renderPage, "Clean Memory Now", function()
-    task.spawn(cleanMemory)
-end)
-task.spawn(function()
-    while alive and task.wait(2) do
-        if main.Visible and memLabel.Parent then
-            local mins = math.max(0, math.ceil((memory.nextAt - os.clock()) / 60))
-            local nextText = Config.AutoClean and ("Next clean in " .. mins .. " min") or "Auto clean is off"
-            memLabel.Text = string.format(
-                "Memory: %.0f MB (Lua %.0f MB)\nTop: %s\n%s\n%s",
-                totalMemoryMb(), luaMb(), topMemoryTags(3), nextText, memory.lastText
-            )
-        end
-    end
+    notify(on and "FPS Boost: ON" or "FPS Boost: OFF")
 end)
 addSection(renderPage, "Frame rate")
 addToggle(renderPage, "FPS Limit", "FPSLimit", "Выключи, чтобы снять ограничение", function() updateFPS() end)
